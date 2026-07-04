@@ -6,7 +6,10 @@ on:
   schedule:
     # UTC 13:00 = JST 22:00（地方競馬のナイター終了後）。GitHubのcronはUTC・ベストエフォート。
     - cron: "0 13 * * *"
-  workflow_dispatch: {} # 手動実行もできる（初回テスト用）
+  workflow_dispatch: {} # 手動実行（Actions画面のRun workflowボタン）
+  push:
+    branches: [main]
+    paths: [".github/workflows/collect.yml"] # このファイルを変えた時だけ自動実行（動作確認用）
 
 permissions:
   contents: write # dataset/model をコミットするため
