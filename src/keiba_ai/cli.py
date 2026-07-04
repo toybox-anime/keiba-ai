@@ -287,8 +287,10 @@ def _collect_one(scraper: PoliteScraper, race_id: str, cfg: dict, *, quiet: bool
     res_html = scraper.get(scraper.result_url(race_id), max_age_sec=max_age)
     result = race_result.parse_result(res_html)
     if not result:
-        if not quiet:
-            (ROOT / cfg["paths"]["raw_dir"] / f"{race_id}_result.html").write_text(res_html, encoding="utf-8")
+        if not quiet:  # 較正用に結果HTMLを残す（ディレクトリが無ければ作る）
+            raw_dir = ROOT / cfg["paths"]["raw_dir"]
+            raw_dir.mkdir(parents=True, exist_ok=True)
+            (raw_dir / f"{race_id}_result.html").write_text(res_html, encoding="utf-8")
         return {"race_id": race_id, "horses": len(race.horses), "result": 0, "added": 0, "exists": True}
 
     added = append_rows(race_result_to_rows(race, result), ROOT / "data/dataset.jsonl")
@@ -387,13 +389,22 @@ def _log_auto(msg: str) -> None:
 
 
 def cmd_auto(args, cfg: dict) -> None:
-    """本日の全開催を自動収集し、データが増えたら再学習する（無人実行向け）."""
+    """本日の全開催を自動収集し、データが増えたら再学習する（無人実行向け）.
+
+    取得失敗してもクラッシュせず、原因をログに残して正常終了する（クラウドで
+    ログをコミット・確認できるように）。
+    """
     scraper = _make_scraper(cfg)
     # 夜1回の実行。必ず「本日」の開催一覧を最新取得する（キャッシュ不使用）。
-    landing = scraper.get(scraper.race_card_landing_url(), max_age_sec=0)
+    try:
+        landing = scraper.get(scraper.race_card_landing_url(), max_age_sec=0)
+    except Exception as e:  # noqa: BLE001
+        _log_auto(f"開催一覧の取得に失敗: {type(e).__name__}: {e}")
+        _log_auto("→ クラウドIPが楽天にブロックされている可能性があります。")
+        return
     meetings = parse_meetings(landing)
     if not meetings:
-        _log_auto("本日の開催が見つかりませんでした。")
+        _log_auto(f"本日の開催が見つかりませんでした（取得HTML長={len(landing)}）。")
         return
     _log_auto(f"自動収集開始。本日の開催: {list(meetings)}")
 
@@ -401,7 +412,11 @@ def cmd_auto(args, cfg: dict) -> None:
     for track, mid in meetings.items():
         for n in range(1, (args.races or 12) + 1):
             rid = race_id_for(mid, n)
-            r = _collect_one(scraper, rid, cfg)
+            try:
+                r = _collect_one(scraper, rid, cfg, quiet=True)
+            except Exception as e:  # noqa: BLE001
+                _log_auto(f"  {track}{n}R 取得エラー: {type(e).__name__}: {e}")
+                break
             if not r["exists"]:
                 break
             grew += r["added"]
