@@ -1,0 +1,18 @@
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+venv/
+.env
+*.html
+data/auto_run.log
+
+# 一時・巨大・ローカル専用（追跡しない）
+data/cache/
+data/raw/
+reports/
+
+# クラウド（GitHub Actions）で蓄積・共有するため、以下は追跡する:
+#   data/dataset.jsonl … 学習データ
+#   models/            … 学習済みモデル
+#   data/auto.log      … 実行ログ

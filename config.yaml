@@ -1,0 +1,30 @@
+# 楽天競馬 予想AIエージェント 設定
+
+scraper:
+  base_url: "https://keiba.rakuten.co.jp"
+  # robots.txt の Crawl-Delay は 60秒。礼儀として既定で遵守する。
+  # 開発時のみ短縮可だが、本番では 60 を厳守すること。
+  crawl_delay_sec: 60
+  timeout_sec: 20
+  max_retries: 3
+  user_agent: "keiba-ai-research/0.1 (personal use; respects robots.txt)"
+  # 出馬表・結果など変動しないページのキャッシュ有効期間（時間）
+  cache_ttl_hours: 12
+  # オッズは発走直前まで変動するため短命キャッシュにする（分）。
+  # 予想直前に再実行すれば、ほぼ最新のオッズで判断できる。
+  odds_cache_minutes: 10
+  # predict（1レースだけ見る直前用途）の取得間隔。bulk収集の60秒とは別。
+  # 数ページを人間が見る程度の間隔。締め切りに間に合わせるため短め。
+  interactive_delay_sec: 5
+
+report:
+  # Claude API を使う。環境変数 ANTHROPIC_API_KEY を読む。
+  model: "claude-opus-4-8"
+  max_tokens: 4000
+  # 1=堅実, 0=穴狙いを許容 などレポートの方針
+  style: "balanced"   # balanced | conservative | aggressive
+
+paths:
+  raw_dir: "data/raw"
+  cache_dir: "data/cache"
+  reports_dir: "reports"

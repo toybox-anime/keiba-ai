@@ -1,0 +1,4 @@
+# リポジトリ内はLFに正規化（Linuxランナーでシェル/ワークフローが正しく動くように）
+* text=auto eol=lf
+# Windows専用バッチはCRLFのまま
+*.bat text eol=crlf

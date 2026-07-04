@@ -1,0 +1,26 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keiba-ai"
+version = "0.1.0"
+description = "楽天競馬 予想AIエージェント"
+requires-python = ">=3.10"
+dependencies = [
+    "requests>=2.32",
+    "beautifulsoup4>=4.12",
+    "lxml>=5.2",
+    "PyYAML>=6.0",
+    "python-dateutil>=2.9",
+    "anthropic>=0.40",
+    "numpy>=1.26",
+    "lightgbm>=4.5",
+    "scikit-learn>=1.5",
+]
+
+[project.scripts]
+keiba-ai = "keiba_ai.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

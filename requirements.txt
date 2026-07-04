@@ -1,0 +1,16 @@
+# --- データ取得 / 解析 ---
+requests>=2.32
+beautifulsoup4>=4.12
+lxml>=5.2
+
+# --- 設定 / ユーティリティ ---
+PyYAML>=6.0
+python-dateutil>=2.9
+
+# --- レポート生成 (Claude API) ---
+anthropic>=0.40
+
+# --- 機械学習（勝率モデル） ---
+numpy>=1.26
+lightgbm>=4.5
+scikit-learn>=1.5

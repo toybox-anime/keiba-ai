@@ -1,0 +1,46 @@
+name: daily-collect
+
+# 毎晩クラウドで「本日の全開催を収集＋（データが増えれば）再学習」し、
+# 更新した dataset / model をリポジトリにコミットして残す。
+on:
+  schedule:
+    # UTC 13:00 = JST 22:00（地方競馬のナイター終了後）。GitHubのcronはUTC・ベストエフォート。
+    - cron: "0 13 * * *"
+  workflow_dispatch: {} # 手動実行もできる（初回テスト用）
+
+permissions:
+  contents: write # dataset/model をコミットするため
+
+concurrency:
+  group: daily-collect
+  cancel-in-progress: false
+
+jobs:
+  collect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330 # 60秒間隔の収集は長い。上限は6時間弱まで許容
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: 依存インストール
+        run: pip install -r requirements.txt
+
+      - name: 収集＋学習（auto）
+        run: python keiba.py auto
+
+      - name: 変更をコミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/dataset.jsonl models/ data/auto.log 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "変更なし（新規データなし）"
+          else
+            git commit -m "chore: 自動収集 $(date -u +%Y-%m-%d)"
+            git push
+          fi
