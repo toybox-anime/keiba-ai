@@ -4,8 +4,10 @@ name: daily-collect
 # 更新した dataset / model をリポジトリにコミットして残す。
 on:
   schedule:
-    # UTC 13:00 = JST 22:00（地方競馬のナイター終了後）。GitHubのcronはUTC・ベストエフォート。
-    - cron: "0 13 * * *"
+    # GitHubのcronは混雑で数時間遅延する。JST日付が変わる前（UTC15:00前）に結果を拾えるよう、
+    # 早め＋2回にして取りこぼしを防ぐ。分は混雑を避けて半端な値にする。
+    - cron: "17 11 * * *" # 約 JST 20:17（遅延しても余裕をもって当日中）
+    - cron: "47 12 * * *" # 約 JST 21:47（保険。ナイター結果を確実に）
   workflow_dispatch: {} # 手動実行（Actions画面のRun workflowボタン）
   push:
     branches: [main]
@@ -22,6 +24,8 @@ jobs:
   collect:
     runs-on: ubuntu-latest
     timeout-minutes: 330 # 60秒間隔の収集は長い。上限は6時間弱まで許容
+    env:
+      TZ: Asia/Tokyo # ログの時刻をJSTで記録（デバッグしやすく）
     steps:
       - uses: actions/checkout@v4
 
