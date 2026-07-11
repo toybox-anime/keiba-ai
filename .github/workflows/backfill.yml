@@ -1,0 +1,48 @@
+name: backfill
+
+# 過去数日を推測収集する一回限りの手動ワークフロー。
+# このファイルを push すると自動で走る（動作確認用トリガー）。
+on:
+  workflow_dispatch:
+    inputs:
+      to:
+        description: "収集する最終日 YYYYMMDD"
+        default: "20260709"
+  push:
+    branches: [main]
+    paths: [".github/workflows/backfill.yml"]
+
+permissions:
+  contents: write
+
+concurrency:
+  group: keiba-collect # collectと同じグループにして同時実行を避ける
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: バックフィル
+        run: python keiba.py backfill --to "${{ github.event.inputs.to || '20260709' }}"
+      - name: コミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash origin main || true
+          git add -f data/dataset.jsonl models/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "変更なし（収集ゼロ）"
+          else
+            git commit -m "chore: backfill 過去分の収集"
+            git push
+          fi

@@ -13,7 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
@@ -21,7 +21,7 @@ import yaml
 from . import parser as race_parser
 from . import result as race_result
 from .betting import recommend_buy_methods
-from .dataset import append_rows, dataset_stats, race_result_to_rows
+from .dataset import append_rows, dataset_stats, load_dataset, race_result_to_rows
 from .features import build_feature_table
 from .model import WinModel
 from .odds import OddsBook, parse_into
@@ -297,6 +297,69 @@ def _collect_one(scraper: PoliteScraper, race_id: str, cfg: dict, *, quiet: bool
     return {"race_id": race_id, "horses": len(race.horses), "result": len(result), "added": added, "exists": True}
 
 
+def _add_days(yyyymmdd: int, n: int) -> int:
+    d = datetime.strptime(str(yyyymmdd), "%Y%m%d") + timedelta(days=n)
+    return int(d.strftime("%Y%m%d"))
+
+
+def _track_latest(rows: list[dict]) -> dict[str, tuple[int, int, int]]:
+    """各競馬場(場コード4桁) の最新開催 (日付, 開催回, 日次) を返す."""
+    latest: dict[str, tuple[int, int, int]] = {}
+    for r in rows:
+        rid = r["race_id"]
+        date, middle = int(rid[:8]), rid[8:16]
+        track, kk, dd = middle[:4], int(middle[4:6]), int(middle[6:8])
+        if track not in latest or date > latest[track][0]:
+            latest[track] = (date, kk, dd)
+    return latest
+
+
+def _try_meeting(scraper, cfg, date_int: int, track: str, kk: int, dd: int) -> tuple[bool, int]:
+    """候補開催（日付・場・開催回・日次）を試す。1Rに馬がいれば有効とみなし全R収集."""
+    added = 0
+    for n in range(1, 13):
+        rid = f"{date_int:08d}{track}{kk:02d}{dd:02d}{n:02d}"
+        try:
+            r = _collect_one(scraper, rid, cfg, quiet=True)
+        except Exception:  # noqa: BLE001
+            break
+        if not r["exists"]:
+            if n == 1:
+                return (False, 0)  # 開催なし
+            break
+        added += r["added"]
+    return (True, added)
+
+
+def cmd_backfill(args, cfg: dict) -> None:
+    """過去数日を、RACEIDの規則から推測して収集する（ベストエフォート）."""
+    scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
+    end = int(args.to) if args.to else _add_days(int(datetime.now().strftime("%Y%m%d")), -1)
+    rows = load_dataset(ROOT / "data/dataset.jsonl") if (ROOT / "data/dataset.jsonl").exists() else []
+    latest = _track_latest(rows)
+    print(f"[backfill] 対象終了日: {end} / 既知の競馬場 {len(latest)}場から推測収集", file=sys.stderr)
+
+    total = 0
+    for track, (last_date, kk, dd) in sorted(latest.items()):
+        if _add_days(last_date, 14) < end:
+            continue  # 古すぎる開催はスキップ
+        cur = _add_days(last_date, 1)
+        while cur <= end:
+            ok, added = _try_meeting(scraper, cfg, cur, track, kk, dd + 1)
+            if ok:
+                dd += 1
+            else:  # 開催回が変わった可能性 → 次の回の初日を試す
+                ok, added = _try_meeting(scraper, cfg, cur, track, kk + 1, 1)
+                if ok:
+                    kk, dd = kk + 1, 1
+            if ok:
+                total += added
+                print(f"  {cur} 場{track} 回{kk}日{dd}: {added}行", file=sys.stderr)
+            cur = _add_days(cur, 1)
+
+    print(f"[backfill] 完了。追記 {total}行。現状: {dataset_stats(ROOT / 'data/dataset.jsonl')}", file=sys.stderr)
+
+
 def cmd_collect(args, cfg: dict) -> None:
     """出馬表＋結果を取得し、学習データセットに追記する（1レース）."""
     scraper = _make_scraper(cfg)
@@ -475,9 +538,11 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="keiba-ai", description="楽天競馬 予想AIエージェント")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    for name in ("predict", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "train", "auto"):
+    for name in ("predict", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto"):
         sp = sub.add_parser(name)
-        if name not in ("train", "auto"):
+        if name == "backfill":
+            sp.add_argument("--to", help="収集する最終日 YYYYMMDD（既定は昨日）")
+        if name not in ("train", "auto", "backfill"):
             sp.add_argument("--race-id", help="18桁のRACEID")
             sp.add_argument("--date", help="開催日 YYYY-MM-DD")
             sp.add_argument("--track", help="競馬場名 (例: 大井)")
@@ -532,6 +597,7 @@ def main(argv: list[str] | None = None) -> None:
         "fetch-odds": cmd_fetch_odds,
         "collect": cmd_collect,
         "collect-day": cmd_collect_day,
+        "backfill": cmd_backfill,
         "train": cmd_train,
         "auto": cmd_auto,
     }
