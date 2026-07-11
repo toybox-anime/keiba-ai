@@ -1,0 +1,47 @@
+name: predict-day
+
+# 毎朝、本日の全レースを Gemini に予想させ predictions/日付.md に保存＆コミット。
+# あなたは GitHub でそのファイルを見るだけ。
+on:
+  schedule:
+    - cron: "30 22 * * *" # 約 JST 07:30（朝）。GitHubのcronは遅延あり。
+  workflow_dispatch: {}
+  push:
+    branches: [main]
+    paths: [".github/workflows/predict.yml"] # このファイル変更時に自動実行（動作確認用）
+
+permissions:
+  contents: write
+
+concurrency:
+  group: keiba-predict
+  cancel-in-progress: false
+
+jobs:
+  predict:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      TZ: Asia/Tokyo
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: 本日の予想を生成（Gemini）
+        run: python keiba.py predict-day --budget 5000
+      - name: コミット
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase --autostash origin main || true
+          git add -f predictions/ 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "変更なし"
+          else
+            git commit -m "chore: 本日の自動予想"
+            git push
+          fi

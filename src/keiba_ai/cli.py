@@ -192,6 +192,58 @@ def cmd_calibrate(args, cfg: dict) -> None:
     print("→ このHTMLを開き、出走表テーブルのセレクタ／列順を parser.py に反映してください。", file=sys.stderr)
 
 
+def cmd_predict_day(args, cfg: dict) -> None:
+    """本日の全レースを Gemini に自動予想させ、predictions/日付.md に保存する（朝の自動実行向け）."""
+    from . import gemini_client
+
+    scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
+    if args.track or args.race_id:
+        meetings = {(args.track or "指定開催"): _resolve_meeting_id(args, scraper, cfg)}
+    else:
+        landing = scraper.get(scraper.race_card_landing_url(), max_age_sec=0)
+        meetings = parse_meetings(landing)
+    if not meetings:
+        print("本日の開催が見つかりません。", file=sys.stderr)
+        return
+
+    model = cfg.get("gemini", {}).get("model", gemini_client.DEFAULT_MODEL)
+    maxr = args.races or 12
+    day = next(iter(meetings.values()))[:8]
+    day_fmt = f"{day[:4]}-{day[4:6]}-{day[6:8]}"
+    card_age = cfg["scraper"]["cache_ttl_hours"] * 3600
+    print(f"[predict-day] {day_fmt} の予想を生成: {list(meetings)}", file=sys.stderr)
+
+    out_lines = [f"# {day_fmt} 本日の自動予想（Gemini）", "", f"対象: {' / '.join(meetings)}", ""]
+    n_pred = 0
+    for track, mid in meetings.items():
+        for n in range(1, maxr + 1):
+            rid = race_id_for(mid, n)
+            try:
+                race = race_parser.parse_race_card(
+                    scraper.get(scraper.race_card_url(rid), max_age_sec=card_age), rid
+                )
+            except Exception:  # noqa: BLE001
+                race = None
+            if not race or not race.horses:
+                break
+            book = _load_odds_book(scraper, rid, cfg, kinds=SCAN_ODDS_KINDS)
+            prompt = build_gemini_prompt(race, bankroll=args.budget, odds_book=book)
+            try:
+                pred = gemini_client.generate(prompt, model=model)
+                n_pred += 1
+            except Exception as e:  # noqa: BLE001
+                pred = f"（予想生成に失敗: {type(e).__name__}: {e}）"
+            print(f"  {track}{n}R 予想生成", file=sys.stderr)
+            out_lines += [f"## {track}{n}R　{race.title or ''}", "", pred, "", "---", ""]
+
+    out_lines += ["", "※Geminiによる自動予想。馬券は自己責任・20歳以上。朝時点の暫定オッズに基づきます。"]
+    pdir = ROOT / "predictions"
+    pdir.mkdir(parents=True, exist_ok=True)
+    out = pdir / f"{day_fmt}.md"
+    out.write_text("\n".join(out_lines), encoding="utf-8")
+    print(f"\n✅ 予想を保存: {out}（{n_pred}レース）", file=sys.stderr)
+
+
 def cmd_scan(args, cfg: dict) -> None:
     """本日の全レースを分析し、妙味（EVプラス）のあるレース・買い目をランキング表示する."""
     scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
@@ -538,7 +590,7 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="keiba-ai", description="楽天競馬 予想AIエージェント")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    for name in ("predict", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto"):
+    for name in ("predict", "predict-day", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto"):
         sp = sub.add_parser(name)
         if name == "backfill":
             sp.add_argument("--to", help="収集する最終日 YYYYMMDD（既定は昨日）")
@@ -547,9 +599,10 @@ def main(argv: list[str] | None = None) -> None:
             sp.add_argument("--date", help="開催日 YYYY-MM-DD")
             sp.add_argument("--track", help="競馬場名 (例: 大井)")
             sp.add_argument("--race", type=int, help="レース番号 1-12")
+        if name in ("scan", "predict-day"):
+            sp.add_argument("--budget", type=int, help="軍資金（円）。買い目金額も算出")
+            sp.add_argument("--races", type=int, help="各開催で扱う最大レース数（既定12）")
         if name == "scan":
-            sp.add_argument("--budget", type=int, help="軍資金（円）。指定すると各レースの金額も算出")
-            sp.add_argument("--races", type=int, help="各開催で分析する最大レース数（既定12）")
             sp.add_argument("--fresh", action="store_true", help="オッズを最新取得（締め切り前）")
         if name == "collect-day":
             sp.add_argument("--races", type=int, help="収集する最大レース数（既定12）")
@@ -592,6 +645,7 @@ def main(argv: list[str] | None = None) -> None:
     cfg = load_config()
     dispatch = {
         "predict": cmd_predict,
+        "predict-day": cmd_predict_day,
         "scan": cmd_scan,
         "calibrate": cmd_calibrate,
         "fetch-odds": cmd_fetch_odds,
