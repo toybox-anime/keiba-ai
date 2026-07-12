@@ -227,13 +227,20 @@ def cmd_predict_day(args, cfg: dict) -> None:
             if not race or not race.horses:
                 break
             book = _load_odds_book(scraper, rid, cfg, kinds=SCAN_ODDS_KINDS)
-            prompt = build_gemini_prompt(race, bankroll=args.budget, odds_book=book)
-            try:
-                pred = gemini_client.generate(prompt, model=model)
-                n_pred += 1
-            except Exception as e:  # noqa: BLE001
-                pred = f"（予想生成に失敗: {type(e).__name__}: {e}）"
-            print(f"  {track}{n}R 予想生成", file=sys.stderr)
+            rec = recommend_buy_methods(build_feature_table(race), book, bankroll=args.budget)
+            has_value = bool(rec and rec.get("confident"))
+            # 無料枠を守るため、妙味（EVプラス）のあるレースだけGeminiに投げる（--allで全レース）
+            if has_value or args.all:
+                prompt = build_gemini_prompt(race, bankroll=args.budget, odds_book=book)
+                try:
+                    pred = gemini_client.generate(prompt, model=model)
+                    n_pred += 1
+                    print(f"  {track}{n}R 予想生成", file=sys.stderr)
+                except Exception as e:  # noqa: BLE001
+                    pred = f"（予想生成に失敗: {type(e).__name__}: {e}）"
+            else:
+                pred = "妙味（EVプラスの買い目）なし → 見送り推奨。"
+                print(f"  {track}{n}R 見送り（Gemini呼ばず）", file=sys.stderr)
             out_lines += [f"## {track}{n}R　{race.title or ''}", "", pred, "", "---", ""]
 
     out_lines += ["", "※Geminiによる自動予想。馬券は自己責任・20歳以上。朝時点の暫定オッズに基づきます。"]
@@ -602,6 +609,8 @@ def main(argv: list[str] | None = None) -> None:
         if name in ("scan", "predict-day"):
             sp.add_argument("--budget", type=int, help="軍資金（円）。買い目金額も算出")
             sp.add_argument("--races", type=int, help="各開催で扱う最大レース数（既定12）")
+        if name == "predict-day":
+            sp.add_argument("--all", action="store_true", help="妙味なしも含め全レースをGemini予想（無料枠に注意）")
         if name == "scan":
             sp.add_argument("--fresh", action="store_true", help="オッズを最新取得（締め切り前）")
         if name == "collect-day":

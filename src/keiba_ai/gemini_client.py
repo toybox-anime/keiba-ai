@@ -7,6 +7,7 @@ REST で呼ぶ（requests のみ・追加SDK不要）。APIキーは環境変数
 from __future__ import annotations
 
 import os
+import time
 
 import requests
 
@@ -50,7 +51,14 @@ def generate(prompt: str, *, api_key: str | None = None, model: str = DEFAULT_MO
     if resp.status_code == 404:  # モデルが使えない → 使えるモデルを探して再試行
         alt = _pick_fallback(available_models(api_key))
         if alt and alt != model:
-            resp = _call(alt)
+            model, resp = alt, _call(alt)
+
+    # 429（レート制限）は少し待って数回リトライ（分あたり制限なら回復する）
+    for attempt in range(1, 4):
+        if resp.status_code not in (429, 503):
+            break
+        time.sleep(min(15 * attempt, 45))
+        resp = _call(model)
 
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini API エラー {resp.status_code}: {resp.text[:300]}")
