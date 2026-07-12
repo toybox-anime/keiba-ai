@@ -19,7 +19,8 @@ scraper:
 
 gemini:
   # 朝の自動予想で使う Gemini モデル（無料枠）。環境変数 GEMINI_API_KEY を読む。
-  model: "gemini-2.5-flash"
+  # 使えない場合は利用可能なモデルへ自動フォールバックする。
+  model: "gemini-flash-latest"
 
 report:
   # Claude API を使う。環境変数 ANTHROPIC_API_KEY を読む。

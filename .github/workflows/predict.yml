@@ -1,5 +1,6 @@
 name: predict-day
 
+# モデル自動フォールバック対応版。
 # 毎朝、本日の全レースを Gemini に予想させ predictions/日付.md に保存＆コミット。
 # あなたは GitHub でそのファイルを見るだけ。
 on:
