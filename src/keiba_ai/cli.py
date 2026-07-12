@@ -22,6 +22,15 @@ from . import parser as race_parser
 from . import result as race_result
 from .betting import recommend_buy_methods
 from .dataset import append_rows, dataset_stats, load_dataset, race_result_to_rows
+from .grading import (
+    append_prediction,
+    grade_record,
+    load_ledger,
+    parse_picks,
+    recent_feedback_line,
+    save_ledger,
+    summarize,
+)
 from .features import build_feature_table
 from .model import WinModel
 from .odds import OddsBook, parse_into
@@ -245,16 +254,26 @@ def cmd_predict_day(args, cfg: dict) -> None:
         f"# {day_fmt} 本日の自動予想（Gemini）", "",
         f"対象: {' / '.join(meetings)}　｜　自動予想は妙味上位{maxcalls}レース", "",
     ]
+    feedback = recent_feedback_line(ROOT / "predictions/ledger.jsonl")  # 直近成績で自己補正
     n_pred = 0
     for r in races:
         track, n, race, rec = r["track"], r["n"], r["race"], r["rec"]
         head = f"## {track}{n}R　{race.title or ''}"
         if (track, n) in chosen:
-            prompt = build_gemini_prompt(race, bankroll=args.budget, odds_book=r["book"], compact=True)
+            prompt = build_gemini_prompt(
+                race, bankroll=args.budget, odds_book=r["book"], compact=True, feedback=feedback
+            )
             try:
                 pred = gemini_client.generate(prompt, model=model, max_tokens=1200)
                 n_pred += 1
-                print(f"  {track}{n}R 予想生成", file=sys.stderr)
+                # Geminiの◎○▲を台帳に記録（夜に採点する）
+                picks = parse_picks(pred)
+                append_prediction(
+                    {"date": day_fmt, "race_id": race.race_id, "label": f"{track}{n}R",
+                     "graded": False, **picks},
+                    ROOT / "predictions/ledger.jsonl",
+                )
+                print(f"  {track}{n}R 予想生成 ◎{picks.get('honmei')}", file=sys.stderr)
             except Exception as e:  # noqa: BLE001
                 pred = f"（予想生成に失敗: {type(e).__name__}: {e}）"
         elif r["value"]:
@@ -270,6 +289,52 @@ def cmd_predict_day(args, cfg: dict) -> None:
     out = pdir / f"{day_fmt}.md"
     out.write_text("\n".join(out_lines), encoding="utf-8")
     print(f"\n✅ 予想を保存: {out}（{n_pred}レース）", file=sys.stderr)
+
+
+def cmd_grade(args, cfg: dict) -> None:  # noqa: ARG001
+    """予想台帳を結果と突き合わせて採点し、成績を集計する（夜の自動実行向け）."""
+    scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
+    ledger_path = ROOT / "predictions/ledger.jsonl"
+    ledger = load_ledger(ledger_path)
+    ungraded = [r for r in ledger if not r.get("graded")]
+    if not ungraded:
+        print("[grade] 採点対象なし", file=sys.stderr)
+        return
+    max_age = cfg["scraper"]["cache_ttl_hours"] * 3600
+    done = 0
+    for r in ungraded:
+        try:
+            result = race_result.parse_result(
+                scraper.get(scraper.result_url(r["race_id"]), max_age_sec=max_age)
+            )
+        except Exception:  # noqa: BLE001
+            result = {}
+        if not result:
+            continue  # まだ結果が出ていない
+        grade_record(r, result)
+        done += 1
+        mark = "◎的中!" if r.get("hit_win") else ("複勝" if r.get("hit_place") else "")
+        print(f"  {r['label']} ◎{r.get('honmei')}→{r.get('honmei_finish')}着 {mark}", file=sys.stderr)
+
+    save_ledger(ledger, ledger_path)
+    overall = summarize(ledger, n=100000)
+    recent = summarize(ledger, n=30)
+    print(f"[grade] 採点{done}件。通算{overall} / 直近{recent}", file=sys.stderr)
+
+    # 見やすい成績表を残す
+    rec_md = [
+        "# 成績（答え合わせ）",
+        "",
+        f"- 通算: {overall}",
+        f"- 直近30レース: {recent}",
+        "",
+        "| 日付 | レース | ◎ | 着順 | 結果 |",
+        "|---|---|---|---|---|",
+    ]
+    for r in [x for x in ledger if x.get("graded")][-30:][::-1]:
+        res = "◎的中" if r.get("hit_win") else ("複勝圏" if r.get("hit_place") else "×")
+        rec_md.append(f'| {r.get("date")} | {r.get("label")} | {r.get("honmei")} | {r.get("honmei_finish")} | {res} |')
+    (ROOT / "predictions" / "record.md").write_text("\n".join(rec_md), encoding="utf-8")
 
 
 def cmd_scan(args, cfg: dict) -> None:
@@ -618,7 +683,7 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="keiba-ai", description="楽天競馬 予想AIエージェント")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    for name in ("predict", "predict-day", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto"):
+    for name in ("predict", "predict-day", "grade", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto"):
         sp = sub.add_parser(name)
         if name == "backfill":
             sp.add_argument("--to", help="収集する最終日 YYYYMMDD（既定は昨日）")
@@ -677,6 +742,7 @@ def main(argv: list[str] | None = None) -> None:
     dispatch = {
         "predict": cmd_predict,
         "predict-day": cmd_predict_day,
+        "grade": cmd_grade,
         "scan": cmd_scan,
         "calibrate": cmd_calibrate,
         "fetch-odds": cmd_fetch_odds,

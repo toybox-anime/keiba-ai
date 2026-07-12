@@ -40,11 +40,15 @@ jobs:
       - name: 収集＋学習（auto）
         run: python keiba.py auto
 
+      - name: 答え合わせ（朝の予想を結果で採点）
+        run: python keiba.py grade || true
+
       - name: 変更をコミット
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f data/dataset.jsonl models/ data/auto.log 2>/dev/null || true
+          git pull --rebase --autostash origin main || true
+          git add -f data/dataset.jsonl models/ data/auto.log predictions/ledger.jsonl predictions/record.md 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "変更なし（新規データなし）"
           else
