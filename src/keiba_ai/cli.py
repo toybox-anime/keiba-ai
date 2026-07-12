@@ -111,8 +111,9 @@ def cmd_predict(args, cfg: dict) -> None:
     # --- Geminiモード: 貼り付け用の予想依頼文を出力 ---
     if args.gemini or args.gem:
         gem = bool(args.gem)
+        # --gem は指示文省略＋EV圧縮（トークン最小）。--gemini は解説込みのフル版。
         prompt = build_gemini_prompt(
-            race, bankroll=args.budget, style=style, odds_book=odds_book, gem_mode=gem
+            race, bankroll=args.budget, style=style, odds_book=odds_book, gem_mode=gem, compact=gem
         )
         out = reports_dir / f"{race_id}_gemini.txt"
         out.write_text(prompt, encoding="utf-8")
