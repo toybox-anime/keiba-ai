@@ -61,11 +61,11 @@ def generate(
         if alt and alt != model:
             model, resp = alt, _call(alt)
 
-    # 429（レート制限）は少し待って数回リトライ（分あたり制限なら回復する）
-    for attempt in range(1, 4):
-        if resp.status_code not in (429, 503):
+    # 429（分あたり制限）は少し待ってリトライ。ただし日次上限(PerDay)は回復しないので即中断。
+    for attempt in range(1, 3):
+        if resp.status_code not in (429, 503) or "PerDay" in resp.text:
             break
-        time.sleep(min(15 * attempt, 45))
+        time.sleep(min(15 * attempt, 30))
         resp = _call(model)
 
     if resp.status_code != 200:

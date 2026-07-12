@@ -214,8 +214,10 @@ def cmd_predict_day(args, cfg: dict) -> None:
     card_age = cfg["scraper"]["cache_ttl_hours"] * 3600
     print(f"[predict-day] {day_fmt} の予想を生成: {list(meetings)}", file=sys.stderr)
 
-    out_lines = [f"# {day_fmt} 本日の自動予想（Gemini）", "", f"対象: {' / '.join(meetings)}", ""]
-    n_pred = 0
+    maxcalls = args.max_calls or 8
+
+    # --- 第1段階: 全レースを評価（オッズ取得＋妙味スコア算出）。Geminiはまだ呼ばない ---
+    races: list[dict] = []
     for track, mid in meetings.items():
         for n in range(1, maxr + 1):
             rid = race_id_for(mid, n)
@@ -229,21 +231,38 @@ def cmd_predict_day(args, cfg: dict) -> None:
                 break
             book = _load_odds_book(scraper, rid, cfg, kinds=SCAN_ODDS_KINDS)
             rec = recommend_buy_methods(build_feature_table(race), book, bankroll=args.budget)
-            has_value = bool(rec and rec.get("confident"))
-            # 無料枠を守るため、妙味（EVプラス）のあるレースだけGeminiに投げる（--allで全レース）
-            if has_value or args.all:
-                # compact=Trueでトークン節約（出走馬データは維持＝精度そのまま）
-                prompt = build_gemini_prompt(race, bankroll=args.budget, odds_book=book, compact=True)
-                try:
-                    pred = gemini_client.generate(prompt, model=model, max_tokens=1200)
-                    n_pred += 1
-                    print(f"  {track}{n}R 予想生成", file=sys.stderr)
-                except Exception as e:  # noqa: BLE001
-                    pred = f"（予想生成に失敗: {type(e).__name__}: {e}）"
-            else:
-                pred = "妙味（EVプラスの買い目）なし → 見送り推奨。"
-                print(f"  {track}{n}R 見送り（Gemini呼ばず）", file=sys.stderr)
-            out_lines += [f"## {track}{n}R　{race.title or ''}", "", pred, "", "---", ""]
+            value = bool(rec and rec.get("confident"))
+            score = rec["best"]["_score"] if value else -1.0
+            races.append({"track": track, "n": n, "race": race, "book": book, "rec": rec, "value": value, "score": score})
+            print(f"  {track}{n}R 評価 (妙味={'有' if value else '無'})", file=sys.stderr)
+
+    # 妙味レースをスコア順に並べ、上位 maxcalls だけを Gemini 対象にする（無料枠を守る）
+    ranked = sorted([r for r in races if r["value"] or args.all], key=lambda x: x["score"], reverse=True)
+    chosen = {(r["track"], r["n"]) for r in ranked[:maxcalls]}
+
+    # --- 第2段階: レース順に出力。選ばれたレースだけ Gemini 予想 ---
+    out_lines = [
+        f"# {day_fmt} 本日の自動予想（Gemini）", "",
+        f"対象: {' / '.join(meetings)}　｜　自動予想は妙味上位{maxcalls}レース", "",
+    ]
+    n_pred = 0
+    for r in races:
+        track, n, race, rec = r["track"], r["n"], r["race"], r["rec"]
+        head = f"## {track}{n}R　{race.title or ''}"
+        if (track, n) in chosen:
+            prompt = build_gemini_prompt(race, bankroll=args.budget, odds_book=r["book"], compact=True)
+            try:
+                pred = gemini_client.generate(prompt, model=model, max_tokens=1200)
+                n_pred += 1
+                print(f"  {track}{n}R 予想生成", file=sys.stderr)
+            except Exception as e:  # noqa: BLE001
+                pred = f"（予想生成に失敗: {type(e).__name__}: {e}）"
+        elif r["value"]:
+            tips = " / ".join(f'{o["券種"]}{o["組"]}(EV{o["EV"]})' for o in (rec.get("confident") or [])[:3])
+            pred = f"妙味あり（自動予想は上位{maxcalls}件のみ）。EV妙味: {tips}"
+        else:
+            pred = "妙味なし → 見送り推奨。"
+        out_lines += [head, "", pred, "", "---", ""]
 
     out_lines += ["", "※Geminiによる自動予想。馬券は自己責任・20歳以上。朝時点の暫定オッズに基づきます。"]
     pdir = ROOT / "predictions"
@@ -613,6 +632,7 @@ def main(argv: list[str] | None = None) -> None:
             sp.add_argument("--races", type=int, help="各開催で扱う最大レース数（既定12）")
         if name == "predict-day":
             sp.add_argument("--all", action="store_true", help="妙味なしも含め全レースをGemini予想（無料枠に注意）")
+            sp.add_argument("--max-calls", type=int, help="Gemini予想する上位レース数（既定8・無料枠対策）")
         if name == "scan":
             sp.add_argument("--fresh", action="store_true", help="オッズを最新取得（締め切り前）")
         if name == "collect-day":
