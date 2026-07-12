@@ -137,14 +137,35 @@ def gem_instructions() -> str:
     return GEM_INSTRUCTIONS
 
 
+def _horse_rows_md(rows: list[dict]) -> list[str]:
+    out = [
+        "| 馬番 | 馬名 | 性齢 | 騎手 | 斤量 | 単勝 | 人気 | 近走5走 | 馬体重 |",
+        "|---|---|---|---|---|---|---|---|---|",
+    ]
+    for r in rows:
+        kin = "-".join(r.get("近走") or []) or "-"
+        out.append(
+            f'| {r["馬番"]} | {r["馬名"]} | {r.get("性齢") or "-"} | {r.get("騎手") or "-"} | '
+            f'{r.get("斤量") or "-"} | {r["単勝"] or "-"} | {r["人気"] or "-"} | {kin} | {r.get("馬体重") or "-"} |'
+        )
+    return out
+
+
+def _compact_value_line(recommend: dict | None) -> str:
+    conf = (recommend or {}).get("confident") or []
+    if not conf:
+        return "EV1.0超の妙味なし（見送り寄り）"
+    return " / ".join(f'{o["券種"]}{o["組"]}(EV{o["EV"]},的中{o["的中率%"]}%)' for o in conf[:5])
+
+
 def build_gemini_prompt(
     race: Race, *, bankroll: int | None = None, style: str = "balanced",
-    odds_book: OddsBook | None = None, gem_mode: bool = False,
+    odds_book: OddsBook | None = None, gem_mode: bool = False, compact: bool = False,
 ) -> str:
-    """Geminiチャットに貼れる『予想依頼文』を生成する.
+    """Geminiに渡す『予想依頼文』を生成する.
 
-    ツールが集めた出走馬データ＋オッズ＋EV分析を渡し、Gemini自身に本気で予想させる。
-    gem_mode=True なら、指示文を省いてデータ中心にする（Gem側に指示済みの前提）。
+    gem_mode=True: 指示文を省く（Gem側に指示済み）。
+    compact=True: EV表を1行に圧縮しトークンを大幅削減（精度の源=出走馬データは維持）。
     """
     rows = build_feature_table(race)
     market = summarize_market(rows)
@@ -156,6 +177,21 @@ def build_gemini_prompt(
             plan = build_plan(rows, bankroll, style)
     wide = wide_suggestions(rows, odds_book, bankroll=bankroll)
     recommend = recommend_buy_methods(rows, odds_book, bankroll=bankroll) if odds_book else None
+
+    # --- コンパクト版（トークン節約）: 出走馬 + 妙味1行 + 短い依頼 ---
+    if compact:
+        budget = f"軍資金{bankroll:,}円で配分。" if bankroll else ""
+        out = [
+            f"# {race.title or race.race_id} ダ{race.distance_m or '?'}m {race.going or ''} {len(race.horses)}頭",
+            "# 出走馬（近走=左が直近）",
+            *_horse_rows_md(rows),
+            "",
+            f"# 妙味買い目(EV>1.0・参考): {_compact_value_line(recommend)}",
+            "",
+            f"# 依頼: ◎○▲△を馬番名つきで（近走・展開・適性・人気妙味から根拠簡潔に）。"
+            f"買い目を券種・組合せ・何円ずつで。{budget}危険な人気馬も一言。",
+        ]
+        return "\n".join(out)
 
     if gem_mode:
         out: list[str] = [f"# レース: {race.title or race.race_id}"]
@@ -170,15 +206,8 @@ def build_gemini_prompt(
         f"- 距離 {race.distance_m or '不明'}m / 馬場 {race.going or '不明'} / {len(race.horses)}頭立て",
         "",
         "# 出走馬（近走は左が直近の着順）",
-        "| 馬番 | 馬名 | 性齢 | 騎手 | 斤量 | 単勝 | 人気 | 近走5走 | 馬体重 |",
-        "|---|---|---|---|---|---|---|---|---|",
+        *_horse_rows_md(rows),
     ]
-    for r in rows:
-        kin = "-".join(r.get("近走") or []) or "-"
-        out.append(
-            f'| {r["馬番"]} | {r["馬名"]} | {r.get("性齢") or "-"} | {r.get("騎手") or "-"} | '
-            f'{r.get("斤量") or "-"} | {r["単勝"] or "-"} | {r["人気"] or "-"} | {kin} | {r.get("馬体重") or "-"} |'
-        )
 
     if recommend:
         out.append("")

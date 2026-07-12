@@ -231,9 +231,10 @@ def cmd_predict_day(args, cfg: dict) -> None:
             has_value = bool(rec and rec.get("confident"))
             # 無料枠を守るため、妙味（EVプラス）のあるレースだけGeminiに投げる（--allで全レース）
             if has_value or args.all:
-                prompt = build_gemini_prompt(race, bankroll=args.budget, odds_book=book)
+                # compact=Trueでトークン節約（出走馬データは維持＝精度そのまま）
+                prompt = build_gemini_prompt(race, bankroll=args.budget, odds_book=book, compact=True)
                 try:
-                    pred = gemini_client.generate(prompt, model=model)
+                    pred = gemini_client.generate(prompt, model=model, max_tokens=1200)
                     n_pred += 1
                     print(f"  {track}{n}R 予想生成", file=sys.stderr)
                 except Exception as e:  # noqa: BLE001

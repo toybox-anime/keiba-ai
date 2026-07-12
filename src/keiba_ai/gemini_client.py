@@ -39,10 +39,18 @@ def _pick_fallback(models: list[str]) -> str | None:
     return (flash or models or [None])[0]
 
 
-def generate(prompt: str, *, api_key: str | None = None, model: str = DEFAULT_MODEL, timeout: float = 120.0) -> str:
-    """プロンプトを Gemini に投げて本文テキストを返す（モデル自動フォールバック付き）."""
+def generate(
+    prompt: str, *, api_key: str | None = None, model: str = DEFAULT_MODEL,
+    timeout: float = 120.0, max_tokens: int | None = 1500,
+) -> str:
+    """プロンプトを Gemini に投げて本文テキストを返す（モデル自動フォールバック付き）.
+
+    max_tokens で出力トークンを制限（冗長さを抑えてコスト削減）。
+    """
     api_key = _key(api_key)
-    body = {"contents": [{"parts": [{"text": prompt}]}]}
+    body: dict = {"contents": [{"parts": [{"text": prompt}]}]}
+    if max_tokens:
+        body["generationConfig"] = {"maxOutputTokens": max_tokens}
 
     def _call(m: str):
         return requests.post(f"{_BASE}/models/{m}:generateContent?key={api_key}", json=body, timeout=timeout)
