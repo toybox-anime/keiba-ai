@@ -23,7 +23,7 @@ jobs:
     timeout-minutes: 180
     env:
       TZ: Asia/Tokyo
-      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.KEIBAAI }} # Secret名が KEIBAAI（中身はGemini APIキー）
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
