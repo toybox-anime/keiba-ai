@@ -41,7 +41,7 @@ def _pick_fallback(models: list[str]) -> str | None:
 
 def generate(
     prompt: str, *, api_key: str | None = None, model: str = DEFAULT_MODEL,
-    timeout: float = 120.0, max_tokens: int | None = 1500,
+    timeout: float = 120.0, max_tokens: int | None = 2500,
 ) -> str:
     """プロンプトを Gemini に投げて本文テキストを返す（モデル自動フォールバック付き）.
 

@@ -272,7 +272,7 @@ def cmd_predict_day(args, cfg: dict) -> None:
                 race, bankroll=args.budget, odds_book=r["book"], compact=True, feedback=feedback
             )
             try:
-                pred = gemini_client.generate(prompt, model=model, max_tokens=1200)
+                pred = gemini_client.generate(prompt, model=model, max_tokens=2500)
                 n_pred += 1
                 # Geminiの◎○▲を台帳に記録（夜に採点する）
                 picks = parse_picks(pred)

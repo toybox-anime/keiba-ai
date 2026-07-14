@@ -24,7 +24,8 @@ def parse_picks(text: str) -> dict[str, int | None]:
             break
 
     def grab(mark: str) -> int | None:
-        m = re.search(mark + r"\s*(\d{1,2})", target)
+        # 印の直後〜数文字以内の最初の数字を拾う（◎6 / ◎ 6番 / ◎(6) 等に対応。他印は跨がない）
+        m = re.search(mark + r"[^\d◎○▲△【】\n]{0,10}(\d{1,2})", target)
         return int(m.group(1)) if m else None
 
     return {k: grab(v) for k, v in _MARKS.items()}
