@@ -245,14 +245,22 @@ def cmd_predict_day(args, cfg: dict) -> None:
             races.append({"track": track, "n": n, "race": race, "book": book, "rec": rec, "value": value, "score": score})
             print(f"  {track}{n}R 評価 (妙味={'有' if value else '無'})", file=sys.stderr)
 
-    # 妙味レースをスコア順に並べ、上位 maxcalls だけを Gemini 対象にする（無料枠を守る）
-    ranked = sorted([r for r in races if r["value"] or args.all], key=lambda x: x["score"], reverse=True)
+    # Gemini対象を選ぶ（上位 maxcalls）。妙味レース優先、足りなければ主要レース(後半R)で補充。
+    # 朝は組合せオッズ未確定で妙味が出ないことが多いので、この補充で必ず予想を出す。
+    value_races = sorted([r for r in races if r["value"]], key=lambda x: x["score"], reverse=True)
+    if args.all:
+        ranked = races
+    elif len(value_races) >= maxcalls:
+        ranked = value_races
+    else:
+        fillers = sorted([r for r in races if not r["value"]], key=lambda x: x["n"], reverse=True)
+        ranked = value_races + fillers  # 妙味→主要レースの順
     chosen = {(r["track"], r["n"]) for r in ranked[:maxcalls]}
 
     # --- 第2段階: レース順に出力。選ばれたレースだけ Gemini 予想 ---
     out_lines = [
         f"# {day_fmt} 本日の自動予想（Gemini）", "",
-        f"対象: {' / '.join(meetings)}　｜　自動予想は妙味上位{maxcalls}レース", "",
+        f"対象: {' / '.join(meetings)}　｜　自動予想{maxcalls}レース（妙味優先・不足時は主要R）", "",
     ]
     feedback = recent_feedback_line(ROOT / "predictions/ledger.jsonl")  # 直近成績で自己補正
     n_pred = 0
