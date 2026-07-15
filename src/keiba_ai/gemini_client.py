@@ -33,10 +33,23 @@ def available_models(api_key: str | None = None, *, timeout: float = 30.0) -> li
     return out
 
 
+# 新規キーで使えなくなった非推奨モデル（ListModelsには出るが呼ぶと404）
+_DEPRECATED = {"gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro"}
+
+
 def _pick_fallback(models: list[str]) -> str | None:
-    # 速くて安いflash系を優先、なければ何でも
-    flash = [m for m in models if "flash" in m and "lite" not in m and "thinking" not in m]
-    return (flash or models or [None])[0]
+    """使えるモデルを選ぶ。latestエイリアス→flash-lite→その他flashの順。非推奨は避ける."""
+    flash = [m for m in models if "flash" in m and "thinking" not in m and m not in _DEPRECATED]
+
+    def rank(m: str) -> int:
+        if "latest" in m:
+            return 0
+        if "lite" in m:
+            return 1
+        return 2
+
+    flash.sort(key=rank)
+    return (flash or [m for m in models if m not in _DEPRECATED] or models or [None])[0]
 
 
 def generate(
