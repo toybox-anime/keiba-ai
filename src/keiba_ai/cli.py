@@ -223,7 +223,7 @@ def cmd_predict_day(args, cfg: dict) -> None:
     card_age = cfg["scraper"]["cache_ttl_hours"] * 3600
     print(f"[predict-day] {day_fmt} の予想を生成: {list(meetings)}", file=sys.stderr)
 
-    maxcalls = args.max_calls or 8
+    maxcalls = args.max_calls or 5
 
     # --- 第1段階: 全レースを評価（オッズ取得＋妙味スコア算出）。Geminiはまだ呼ばない ---
     races: list[dict] = []
