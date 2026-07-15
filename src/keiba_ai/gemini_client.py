@@ -54,33 +54,56 @@ def _pick_fallback(models: list[str]) -> str | None:
 
 def generate(
     prompt: str, *, api_key: str | None = None, model: str = DEFAULT_MODEL,
-    timeout: float = 120.0, max_tokens: int | None = 2500,
+    timeout: float = 180.0, max_tokens: int | None = 2000,
 ) -> str:
-    """プロンプトを Gemini に投げて本文テキストを返す（モデル自動フォールバック付き）.
+    """プロンプトを Gemini に投げて本文テキストを返す.
 
-    max_tokens で出力トークンを制限（冗長さを抑えてコスト削減）。
+    - thinking(思考)を無効化して高速化（対応しないモデルは自動で外して再試行）。
+    - モデル404は使えるモデルへ自動フォールバック。
+    - タイムアウト/429/503 はリトライ（日次上限PerDayは即中断）。
     """
     api_key = _key(api_key)
-    body: dict = {"contents": [{"parts": [{"text": prompt}]}]}
-    if max_tokens:
-        body["generationConfig"] = {"maxOutputTokens": max_tokens}
 
-    def _call(m: str):
-        return requests.post(f"{_BASE}/models/{m}:generateContent?key={api_key}", json=body, timeout=timeout)
+    def _body(with_think: bool) -> dict:
+        gc: dict = {}
+        if max_tokens:
+            gc["maxOutputTokens"] = max_tokens
+        if with_think:
+            gc["thinkingConfig"] = {"thinkingBudget": 0}  # 思考オフ＝速い・安い
+        b: dict = {"contents": [{"parts": [{"text": prompt}]}]}
+        if gc:
+            b["generationConfig"] = gc
+        return b
 
-    resp = _call(model)
-    if resp.status_code == 404:  # モデルが使えない → 使えるモデルを探して再試行
+    def _call(m: str, with_think: bool = True):
+        try:
+            return requests.post(
+                f"{_BASE}/models/{m}:generateContent?key={api_key}", json=_body(with_think), timeout=timeout
+            )
+        except requests.exceptions.RequestException:
+            return None  # タイムアウト等 → リトライ対象
+
+    def _try(m: str):
+        r = _call(m, True)
+        if r is not None and r.status_code == 400 and "think" in r.text.lower():
+            r = _call(m, False)  # thinkingConfig非対応モデル
+        return r
+
+    resp = _try(model)
+    if resp is not None and resp.status_code == 404:  # モデル不在 → 使えるモデルへ
         alt = _pick_fallback(available_models(api_key))
         if alt and alt != model:
-            model, resp = alt, _call(alt)
+            model, resp = alt, _try(alt)
 
-    # 429（分あたり制限）は少し待ってリトライ。ただし日次上限(PerDay)は回復しないので即中断。
-    for attempt in range(1, 3):
-        if resp.status_code not in (429, 503) or "PerDay" in resp.text:
+    for attempt in range(1, 4):  # タイムアウト/429/503 リトライ
+        retryable = resp is None or (resp.status_code in (429, 503) and "PerDay" not in resp.text)
+        if not retryable:
             break
-        time.sleep(min(15 * attempt, 30))
-        resp = _call(model)
+        time.sleep(min(10 * attempt, 30))
+        resp = _try(model)
 
+    if resp is None:
+        raise RuntimeError("Gemini API 応答なし（タイムアウト）")
     if resp.status_code != 200:
         raise RuntimeError(f"Gemini API エラー {resp.status_code}: {resp.text[:300]}")
     data = resp.json()

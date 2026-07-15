@@ -16,17 +16,20 @@ _MARKS = {"honmei": "◎", "taikou": "○", "tanana": "▲"}
 
 
 def parse_picks(text: str) -> dict[str, int | None]:
-    """Geminiの予想文から ◎○▲ の馬番を取り出す（【PICKS】行を優先）."""
-    target = text
-    for line in text.splitlines():
-        if "PICKS" in line or ("◎" in line and "○" in line):
-            target = line
-            break
+    """Geminiの予想文から ◎○▲ の馬番を取り出す（【PICKS】行を最優先・馬番1-18のみ）."""
+    # 構造化行（【PICKS】等）があればそれだけを対象にする（本文中の「50%」等の誤検出を防ぐ）
+    target = next(
+        (ln for ln in text.splitlines() if "PICKS" in ln or ("【" in ln and "◎" in ln)),
+        text,
+    )
 
     def grab(mark: str) -> int | None:
-        # 印の直後〜数文字以内の最初の数字を拾う（◎6 / ◎ 6番 / ◎(6) 等に対応。他印は跨がない）
-        m = re.search(mark + r"[^\d◎○▲△【】\n]{0,10}(\d{1,2})", target)
-        return int(m.group(1)) if m else None
+        # 印の直後の数字で、馬番として妥当な 1〜18 の最初の値を採用
+        for m in re.finditer(mark + r"[^\d◎○▲△【】\n]{0,12}(\d{1,2})", target):
+            v = int(m.group(1))
+            if 1 <= v <= 18:
+                return v
+        return None
 
     return {k: grab(v) for k, v in _MARKS.items()}
 
