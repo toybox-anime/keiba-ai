@@ -102,7 +102,10 @@ def parse_tanfuku(book: OddsBook, html: str) -> None:
         num_td = tr.select_one("td.number") if tr else None
         if not num_td:
             continue
-        num = int(re.search(r"\d+", num_td.get_text()).group())
+        num_m = re.search(r"\d+", num_td.get_text())
+        if not num_m:  # 馬番が数字でない（取消・除外・見出し行など）はスキップ
+            continue
+        num = int(num_m.group())
         wv = _floats(win_td.get_text())
         if wv:
             book.win[num] = wv[0]
