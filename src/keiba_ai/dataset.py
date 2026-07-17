@@ -56,8 +56,12 @@ def load_dataset(path: str | Path = DEFAULT_PATH) -> list[dict]:
     with path.open(encoding="utf-8") as f:
         for line in f:
             line = line.strip()
-            if line:
+            if not line:
+                continue
+            try:  # 壊れた行（gitコンフリクトマーカー等）は無視
                 rows.append(json.loads(line))
+            except (json.JSONDecodeError, ValueError):
+                continue
     return rows
 
 

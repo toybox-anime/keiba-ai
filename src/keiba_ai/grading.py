@@ -38,7 +38,16 @@ def load_ledger(path: str | Path = LEDGER) -> list[dict]:
     path = Path(path)
     if not path.exists():
         return []
-    return [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    rows = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:  # 壊れた行（gitコンフリクトマーカー等）は無視
+            rows.append(json.loads(line))
+        except (json.JSONDecodeError, ValueError):
+            continue
+    return rows
 
 
 def save_ledger(rows: list[dict], path: str | Path = LEDGER) -> None:
