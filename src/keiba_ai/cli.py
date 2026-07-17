@@ -238,8 +238,12 @@ def cmd_predict_day(args, cfg: dict) -> None:
                 race = None
             if not race or not race.horses:
                 break
-            book = _load_odds_book(scraper, rid, cfg, kinds=SCAN_ODDS_KINDS)
-            rec = recommend_buy_methods(build_feature_table(race), book, bankroll=args.budget)
+            try:  # 1レースの取得/評価でコケても全体を止めない
+                book = _load_odds_book(scraper, rid, cfg, kinds=SCAN_ODDS_KINDS)
+                rec = recommend_buy_methods(build_feature_table(race), book, bankroll=args.budget)
+            except Exception as e:  # noqa: BLE001
+                print(f"  {track}{n}R 評価エラー(スキップ): {type(e).__name__}: {e}", file=sys.stderr)
+                continue
             value = bool(rec and rec.get("confident"))
             score = rec["best"]["_score"] if value else -1.0
             races.append({"track": track, "n": n, "race": race, "book": book, "rec": rec, "value": value, "score": score})
@@ -268,10 +272,10 @@ def cmd_predict_day(args, cfg: dict) -> None:
         track, n, race, rec = r["track"], r["n"], r["race"], r["rec"]
         head = f"## {track}{n}R　{race.title or ''}"
         if (track, n) in chosen:
-            prompt = build_gemini_prompt(
-                race, bankroll=args.budget, odds_book=r["book"], compact=True, feedback=feedback
-            )
             try:
+                prompt = build_gemini_prompt(
+                    race, bankroll=args.budget, odds_book=r["book"], compact=True, feedback=feedback
+                )
                 pred = gemini_client.generate(prompt, model=model, max_tokens=2500)
                 n_pred += 1
                 # Geminiの◎○▲を台帳に記録（夜に採点する）
