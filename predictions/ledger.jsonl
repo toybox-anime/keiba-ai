@@ -40,3 +40,15 @@
 {"date": "2026-07-18", "race_id": "202607183129060112", "label": "高知12R", "graded": true, "honmei": 4, "taikou": 1, "tanana": 10, "honmei_finish": 6, "hit_win": false, "hit_place": false, "others_place": 0}
 {"date": "2026-07-18", "race_id": "202607183230070509", "label": "佐賀9R", "graded": true, "honmei": 8, "taikou": null, "tanana": null, "honmei_finish": 2, "hit_win": false, "hit_place": true, "others_place": 0}
 {"date": "2026-07-18", "race_id": "202607183230070510", "label": "佐賀10R", "graded": true, "honmei": 2, "taikou": 11, "tanana": 10, "honmei_finish": 12, "hit_win": false, "hit_place": false, "others_place": 0}
+{"date": "2026-07-19", "race_id": "202607190304080209", "label": "帯広ば9R", "graded": false, "honmei": 9, "taikou": 1, "tanana": 2}
+{"date": "2026-07-19", "race_id": "202607190304080210", "label": "帯広ば10R", "graded": false, "honmei": 10, "taikou": 9, "tanana": 4}
+{"date": "2026-07-19", "race_id": "202607190304080211", "label": "帯広ば11R", "graded": false, "honmei": 8, "taikou": 2, "tanana": 7}
+{"date": "2026-07-19", "race_id": "202607190304080212", "label": "帯広ば12R", "graded": false, "honmei": 1, "taikou": 6, "tanana": 7}
+{"date": "2026-07-19", "race_id": "202607191006040409", "label": "盛岡9R", "graded": false, "honmei": 5, "taikou": 7, "tanana": 4}
+{"date": "2026-07-19", "race_id": "202607191006040410", "label": "盛岡10R", "graded": false, "honmei": 8, "taikou": 5, "tanana": 4}
+{"date": "2026-07-19", "race_id": "202607191006040411", "label": "盛岡11R", "graded": false, "honmei": 7, "taikou": 9, "tanana": 10}
+{"date": "2026-07-19", "race_id": "202607192219020109", "label": "金沢9R", "graded": false, "honmei": 3, "taikou": 9, "tanana": 7}
+{"date": "2026-07-19", "race_id": "202607193129060209", "label": "高知9R", "graded": false, "honmei": 6, "taikou": 5, "tanana": 3}
+{"date": "2026-07-19", "race_id": "202607193129060210", "label": "高知10R", "graded": false, "honmei": 7, "taikou": 6, "tanana": 2}
+{"date": "2026-07-19", "race_id": "202607193129060211", "label": "高知11R", "graded": false, "honmei": 7, "taikou": 6, "tanana": 4}
+{"date": "2026-07-19", "race_id": "202607193129060212", "label": "高知12R", "graded": false, "honmei": 4, "taikou": 5, "tanana": 2}
