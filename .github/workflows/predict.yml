@@ -1,6 +1,6 @@
 name: predict-day
 
-# 台帳読込を壊れ行に耐性化した版。
+# 400(thinkingConfig非対応)時の再試行を文言非依存に修正版。
 # 毎朝、本日の全レースを Gemini に予想させ predictions/日付.md に保存＆コミット。
 # あなたは GitHub でそのファイルを見るだけ。
 on:

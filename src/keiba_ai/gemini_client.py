@@ -85,8 +85,12 @@ def generate(
 
     def _try(m: str):
         r = _call(m, True)
-        if r is not None and r.status_code == 400 and "think" in r.text.lower():
-            r = _call(m, False)  # thinkingConfig非対応モデル
+        # 400（invalid argument 等）は thinkingConfig 非対応モデルが原因のことが多い。
+        # メッセージ文言に依らず、設定を外して1回だけ再試行する。
+        if r is not None and r.status_code == 400:
+            r2 = _call(m, False)
+            if r2 is not None:
+                r = r2
         return r
 
     resp = _try(model)
