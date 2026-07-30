@@ -160,15 +160,15 @@
 {"date": "2026-07-29", "race_id": "202607292726100410", "label": "園田10R", "graded": true, "honmei": 1, "taikou": 7, "tanana": 6, "honmei_finish": 3, "hit_win": false, "hit_place": true, "others_place": 1}
 {"date": "2026-07-29", "race_id": "202607292726100411", "label": "園田11R", "graded": true, "honmei": 3, "taikou": 8, "tanana": 9, "honmei_finish": 2, "hit_win": false, "hit_place": true, "others_place": 2}
 {"date": "2026-07-29", "race_id": "202607292726100412", "label": "園田12R", "graded": true, "honmei": 11, "taikou": 9, "tanana": 8, "honmei_finish": 1, "hit_win": true, "hit_place": true, "others_place": 1}
-{"date": "2026-07-30", "race_id": "202607303601080610", "label": "門別10R", "graded": false, "honmei": 8, "taikou": 5, "tanana": 4}
-{"date": "2026-07-30", "race_id": "202607303601080611", "label": "門別11R", "graded": false, "honmei": 5, "taikou": 2, "tanana": 1}
-{"date": "2026-07-30", "race_id": "202607303601080612", "label": "門別12R", "graded": false, "honmei": null, "taikou": null, "tanana": null}
-{"date": "2026-07-30", "race_id": "202607302135050410", "label": "川崎10R", "graded": false, "honmei": 3, "taikou": 6, "tanana": 9}
-{"date": "2026-07-30", "race_id": "202607302135050411", "label": "川崎11R", "graded": false, "honmei": 4, "taikou": 1, "tanana": 2}
-{"date": "2026-07-30", "race_id": "202607302135050412", "label": "川崎12R", "graded": false, "honmei": 6, "taikou": 8, "tanana": 1}
-{"date": "2026-07-30", "race_id": "202607302433090310", "label": "名古屋10R", "graded": false, "honmei": 4, "taikou": 10, "tanana": null}
-{"date": "2026-07-30", "race_id": "202607302433090311", "label": "名古屋11R", "graded": false, "honmei": 8, "taikou": 3, "tanana": 7}
-{"date": "2026-07-30", "race_id": "202607302433090312", "label": "名古屋12R", "graded": false, "honmei": 3, "taikou": 8, "tanana": 9}
-{"date": "2026-07-30", "race_id": "202607302726100510", "label": "園田10R", "graded": false, "honmei": 10, "taikou": 7, "tanana": 9}
-{"date": "2026-07-30", "race_id": "202607302726100511", "label": "園田11R", "graded": false, "honmei": 1, "taikou": 4, "tanana": 8}
-{"date": "2026-07-30", "race_id": "202607302726100512", "label": "園田12R", "graded": false, "honmei": 11, "taikou": 4, "tanana": 12}
+{"date": "2026-07-30", "race_id": "202607303601080610", "label": "門別10R", "graded": true, "honmei": 8, "taikou": 5, "tanana": 4, "honmei_finish": 1, "hit_win": true, "hit_place": true, "others_place": 1}
+{"date": "2026-07-30", "race_id": "202607303601080611", "label": "門別11R", "graded": true, "honmei": 5, "taikou": 2, "tanana": 1, "honmei_finish": 4, "hit_win": false, "hit_place": false, "others_place": 1}
+{"date": "2026-07-30", "race_id": "202607303601080612", "label": "門別12R", "graded": true, "honmei": null, "taikou": null, "tanana": null, "honmei_finish": null, "hit_win": false, "hit_place": false, "others_place": 0}
+{"date": "2026-07-30", "race_id": "202607302135050410", "label": "川崎10R", "graded": true, "honmei": 3, "taikou": 6, "tanana": 9, "honmei_finish": 4, "hit_win": false, "hit_place": false, "others_place": 1}
+{"date": "2026-07-30", "race_id": "202607302135050411", "label": "川崎11R", "graded": true, "honmei": 4, "taikou": 1, "tanana": 2, "honmei_finish": 9, "hit_win": false, "hit_place": false, "others_place": 1}
+{"date": "2026-07-30", "race_id": "202607302135050412", "label": "川崎12R", "graded": true, "honmei": 6, "taikou": 8, "tanana": 1, "honmei_finish": 2, "hit_win": false, "hit_place": true, "others_place": 0}
+{"date": "2026-07-30", "race_id": "202607302433090310", "label": "名古屋10R", "graded": true, "honmei": 4, "taikou": 10, "tanana": null, "honmei_finish": 6, "hit_win": false, "hit_place": false, "others_place": 1}
+{"date": "2026-07-30", "race_id": "202607302433090311", "label": "名古屋11R", "graded": true, "honmei": 8, "taikou": 3, "tanana": 7, "honmei_finish": 3, "hit_win": false, "hit_place": true, "others_place": 1}
+{"date": "2026-07-30", "race_id": "202607302433090312", "label": "名古屋12R", "graded": true, "honmei": 3, "taikou": 8, "tanana": 9, "honmei_finish": 3, "hit_win": false, "hit_place": true, "others_place": 1}
+{"date": "2026-07-30", "race_id": "202607302726100510", "label": "園田10R", "graded": true, "honmei": 10, "taikou": 7, "tanana": 9, "honmei_finish": 4, "hit_win": false, "hit_place": false, "others_place": 1}
+{"date": "2026-07-30", "race_id": "202607302726100511", "label": "園田11R", "graded": true, "honmei": 1, "taikou": 4, "tanana": 8, "honmei_finish": 3, "hit_win": false, "hit_place": true, "others_place": 1}
+{"date": "2026-07-30", "race_id": "202607302726100512", "label": "園田12R", "graded": true, "honmei": 11, "taikou": 4, "tanana": 12, "honmei_finish": 3, "hit_win": false, "hit_place": true, "others_place": 1}
