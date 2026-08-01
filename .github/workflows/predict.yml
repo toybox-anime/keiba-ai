@@ -1,15 +1,12 @@
 name: predict-day
 
-# 400(thinkingConfig非対応)時の再試行を文言非依存に修正版。
-# 毎朝、本日の全レースを Gemini に予想させ predictions/日付.md に保存＆コミット。
-# あなたは GitHub でそのファイルを見るだけ。
+# 【停止中】有料Gemini APIをやめたため、朝の自動予想は無効化しています。
+# 定時実行(schedule)を外したので、これ以上APIは呼ばれません（＝課金されません）。
+# 再開したくなったら、下の schedule 行のコメントを外してください。
 on:
-  schedule:
-    - cron: "30 22 * * *" # 約 JST 07:30（朝）。GitHubのcronは遅延あり。
-  workflow_dispatch: {}
-  push:
-    branches: [main]
-    paths: [".github/workflows/predict.yml"] # このファイル変更時に自動実行（動作確認用）
+  workflow_dispatch: {} # 手動実行のみ（自動では走らない）
+  # schedule:
+  #   - cron: "30 22 * * *"
 
 permissions:
   contents: write
