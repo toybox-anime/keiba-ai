@@ -66,6 +66,9 @@ class PoliteScraper:
     def result_url(self, race_id: str) -> str:
         return f"{self.base_url}/race_performance/list/RACEID/{race_id}"
 
+    def dividend_url(self, race_id: str) -> str:
+        return f"{self.base_url}/race_dividend/list/RACEID/{race_id}"
+
     # --- 取得本体 -------------------------------------------------------
     def get(self, url: str, *, use_cache: bool = True, max_age_sec: float | None = None) -> str:
         """URL を取得して HTML 文字列を返す。キャッシュ優先。"""

@@ -90,11 +90,19 @@ def summarize(rows: list[dict], n: int = 30) -> dict:
         return {"件数": 0}
     win = sum(1 for r in recent if r.get("hit_win"))
     place = sum(1 for r in recent if r.get("hit_place"))
-    return {
+    out = {
         "件数": len(recent),
         "◎勝率%": round(win / len(recent) * 100, 1),
         "◎複勝率%": round(place / len(recent) * 100, 1),
     }
+    # 回収率（◎に単勝/複勝を各100円ずつ賭けた場合。配当が取れている分のみ集計）
+    priced = [r for r in recent if "win_return" in r]
+    if priced:
+        bet = 100 * len(priced)
+        out["◎単勝回収率%"] = round(sum(r.get("win_return", 0) for r in priced) / bet * 100, 1)
+        out["◎複勝回収率%"] = round(sum(r.get("place_return", 0) for r in priced) / bet * 100, 1)
+        out["配当集計数"] = len(priced)
+    return out
 
 
 def recent_feedback_line(path: str | Path = LEDGER, n: int = 30) -> str:

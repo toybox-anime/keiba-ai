@@ -41,6 +41,29 @@ def parse_result(html: str) -> dict[int, int]:
     return result
 
 
+def parse_dividend(html: str) -> dict:
+    """払戻ページ → {'win': {馬番: 単勝配当}, 'place': {馬番: 複勝配当}}（100円あたり円）."""
+    soup = BeautifulSoup(html, "lxml")
+    out = {"win": {}, "place": {}}
+    for t in soup.find_all("table"):
+        cells = [c.get_text(" ", strip=True) for c in t.find_all(["th", "td"])]
+        if not any(c == "単勝" for c in cells):
+            continue
+        for i, c in enumerate(cells):
+            if c == "単勝" and i + 2 < len(cells):
+                n = re.findall(r"\d+", cells[i + 1])
+                p = re.findall(r"[\d,]+", cells[i + 2])
+                if n and p:
+                    out["win"][int(n[0])] = int(p[0].replace(",", ""))
+            elif c == "複勝" and i + 2 < len(cells):
+                ns = [int(x) for x in re.findall(r"\d+", cells[i + 1])]
+                ps = [int(x.replace(",", "")) for x in re.findall(r"[\d,]+", cells[i + 2])]
+                for a, b in zip(ns, ps):
+                    out["place"][a] = b
+        break
+    return out
+
+
 def _result_table(soup: BeautifulSoup):
     """着順と馬番を見出しに持つテーブルを選ぶ."""
     best = None

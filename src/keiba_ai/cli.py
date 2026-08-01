@@ -308,25 +308,38 @@ def cmd_grade(args, cfg: dict) -> None:  # noqa: ARG001
     scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
     ledger_path = ROOT / "predictions/ledger.jsonl"
     ledger = load_ledger(ledger_path)
-    ungraded = [r for r in ledger if not r.get("graded")]
-    if not ungraded:
+    # 未採点、または配当(回収率用)が未取得のものを処理（既存分も配当を後追い取得）
+    todo = [r for r in ledger if not r.get("graded") or "win_return" not in r]
+    if not todo:
         print("[grade] 採点対象なし", file=sys.stderr)
         return
     max_age = cfg["scraper"]["cache_ttl_hours"] * 3600
     done = 0
-    for r in ungraded:
-        try:
-            result = race_result.parse_result(
-                scraper.get(scraper.result_url(r["race_id"]), max_age_sec=max_age)
-            )
-        except Exception:  # noqa: BLE001
-            result = {}
-        if not result:
-            continue  # まだ結果が出ていない
-        grade_record(r, result)
+    for r in todo:
+        honmei = r.get("honmei")
+        if not r.get("graded"):  # 着順採点
+            try:
+                result = race_result.parse_result(
+                    scraper.get(scraper.result_url(r["race_id"]), max_age_sec=max_age)
+                )
+            except Exception:  # noqa: BLE001
+                result = {}
+            if not result:
+                continue  # まだ結果が出ていない
+            grade_record(r, result)
+        if "win_return" not in r and honmei:  # 配当取得（回収率用）
+            try:
+                div = race_result.parse_dividend(
+                    scraper.get(scraper.dividend_url(r["race_id"]), max_age_sec=max_age)
+                )
+                r["win_return"] = int(div["win"].get(honmei, 0))
+                r["place_return"] = int(div["place"].get(honmei, 0))
+            except Exception:  # noqa: BLE001
+                pass
         done += 1
         mark = "◎的中!" if r.get("hit_win") else ("複勝" if r.get("hit_place") else "")
-        print(f"  {r['label']} ◎{r.get('honmei')}→{r.get('honmei_finish')}着 {mark}", file=sys.stderr)
+        print(f"  {r['label']} ◎{r.get('honmei')}→{r.get('honmei_finish')}着 {mark} "
+              f"単勝戻{r.get('win_return', '-')}", file=sys.stderr)
 
     save_ledger(ledger, ledger_path)
     overall = summarize(ledger, n=100000)
@@ -334,18 +347,30 @@ def cmd_grade(args, cfg: dict) -> None:  # noqa: ARG001
     print(f"[grade] 採点{done}件。通算{overall} / 直近{recent}", file=sys.stderr)
 
     # 見やすい成績表を残す
+    def line(s):
+        return (
+            f"◎勝率{s.get('◎勝率%')}% 複勝率{s.get('◎複勝率%')}% ｜ "
+            f"**単勝回収{s.get('◎単勝回収率%','-')}% / 複勝回収{s.get('◎複勝回収率%','-')}%** "
+            f"（{s.get('件数')}レース, 配当集計{s.get('配当集計数','-')}）"
+        )
+
     rec_md = [
         "# 成績（答え合わせ）",
         "",
-        f"- 通算: {overall}",
-        f"- 直近30レース: {recent}",
+        "## 回収率（◎に単勝・複勝を各100円ずつ機械的に賭けた場合）",
+        f"- 通算: {line(overall)}",
+        f"- 直近30: {line(recent)}",
         "",
-        "| 日付 | レース | ◎ | 着順 | 結果 |",
-        "|---|---|---|---|---|",
+        "> **回収率100%超で理論上プラス**（100円→100円以上戻る）。的中率より回収率が本質。",
+        "",
+        "| 日付 | レース | ◎ | 着順 | 単勝戻 | 複勝戻 |",
+        "|---|---|---|---|---|---|",
     ]
     for r in [x for x in ledger if x.get("graded")][-30:][::-1]:
-        res = "◎的中" if r.get("hit_win") else ("複勝圏" if r.get("hit_place") else "×")
-        rec_md.append(f'| {r.get("date")} | {r.get("label")} | {r.get("honmei")} | {r.get("honmei_finish")} | {res} |')
+        rec_md.append(
+            f'| {r.get("date")} | {r.get("label")} | {r.get("honmei")} | {r.get("honmei_finish")} | '
+            f'{r.get("win_return", "-")} | {r.get("place_return", "-")} |'
+        )
     (ROOT / "predictions" / "record.md").write_text("\n".join(rec_md), encoding="utf-8")
 
 
