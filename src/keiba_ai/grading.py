@@ -66,6 +66,27 @@ def append_prediction(record: dict, path: str | Path = LEDGER) -> bool:
     return True
 
 
+def grade_from_dividend(rec: dict, div: dict) -> dict | None:
+    """払戻ページ(単勝=勝ち馬, 複勝=3着内, 配当)で採点する（結果ページより信頼できる）.
+
+    採点できたら rec を更新して返す。結果未確定（単勝配当なし）なら None。
+    """
+    win_d = div.get("win") or {}
+    place_d = div.get("place") or {}
+    if not win_d:
+        return None
+    honmei = rec.get("honmei")
+    winner = next(iter(win_d))
+    rec["winner"] = winner
+    rec["hit_win"] = honmei == winner
+    rec["hit_place"] = honmei in place_d
+    rec["win_return"] = int(win_d.get(honmei, 0))
+    rec["place_return"] = int(place_d.get(honmei, 0))
+    rec["honmei_finish"] = 1 if rec["hit_win"] else (3 if rec["hit_place"] else None)
+    rec["graded"] = True
+    return rec
+
+
 def grade_record(rec: dict, result: dict[int, int]) -> dict:
     """1件の予想を結果（{馬番:着順}）で採点し、rec を更新して返す."""
     honmei = rec.get("honmei")
