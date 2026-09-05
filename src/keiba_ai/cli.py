@@ -111,6 +111,7 @@ def cmd_predict(args, cfg: dict) -> None:
     odds_book = None
     if args.ev and args.budget:
         odds_book = _load_odds_book(scraper, race_id, cfg, fresh=args.fresh)
+        _apply_win_odds(race, odds_book)
         print(f"[EV] オッズ取得時刻: {datetime.now():%H:%M:%S}（発走直前ほど精度向上）", file=sys.stderr)
 
     reports_dir = ROOT / cfg["paths"]["reports_dir"]
@@ -139,10 +140,14 @@ def cmd_predict(args, cfg: dict) -> None:
         return
 
     # --- 通常モード: Claudeでレポート生成 ---
-    _maybe_retrain()  # データが十分なら（インタラクティブ環境で）モデル自動更新
-    win_model = WinModel.load()
-    if win_model is not None:
-        print("[EV] 学習済み勝率モデルを使用", file=sys.stderr)
+    win_model = None
+    if getattr(args, "no_model", False):
+        print("[EV] 勝率モデル不使用（市場オッズ由来の確率でEV計算）", file=sys.stderr)
+    else:
+        _maybe_retrain()  # データが十分なら（インタラクティブ環境で）モデル自動更新
+        win_model = WinModel.load()
+        if win_model is not None:
+            print("[EV] 学習済み勝率モデルを使用", file=sys.stderr)
 
     print("[3/3] レポートを生成中...", file=sys.stderr)
     rep = cfg["report"]
@@ -186,6 +191,15 @@ def _load_odds_book(
         file=sys.stderr,
     )
     return book
+
+
+def _apply_win_odds(race, book: OddsBook | None) -> None:
+    """単複オッズページの単勝を出走馬に反映する（出馬表側が古い/未掲載でも市場勝率を出せるように）."""
+    if not book or not book.win:
+        return
+    for h in race.horses:
+        if (o := book.win.get(h.num)) and o > 0:
+            h.odds_win = o
 
 
 def cmd_calibrate(args, cfg: dict) -> None:
@@ -240,6 +254,7 @@ def cmd_predict_day(args, cfg: dict) -> None:
                 break
             try:  # 1レースの取得/評価でコケても全体を止めない
                 book = _load_odds_book(scraper, rid, cfg, kinds=SCAN_ODDS_KINDS)
+                _apply_win_odds(race, book)
                 rec = recommend_buy_methods(build_feature_table(race), book, bankroll=args.budget)
             except Exception as e:  # noqa: BLE001
                 print(f"  {track}{n}R 評価エラー(スキップ): {type(e).__name__}: {e}", file=sys.stderr)
@@ -376,7 +391,8 @@ def cmd_scan(args, cfg: dict) -> None:
 
     maxr = args.races or 12
     print(f"[scan] 対象: {list(meetings)} / 各最大{maxr}R を分析（数分かかります）", file=sys.stderr)
-    card_age = cfg["scraper"]["cache_ttl_hours"] * 3600
+    # --fresh なら出馬表も取り直す（単勝オッズは出馬表に載るため、朝のキャッシュだと空のまま）
+    card_age = 0 if args.fresh else cfg["scraper"]["cache_ttl_hours"] * 3600
     found, skipped, day = [], [], ""
 
     for track, mid in meetings.items():
@@ -392,6 +408,7 @@ def cmd_scan(args, cfg: dict) -> None:
             if not race or not race.horses:
                 break  # この開催はここで終わり
             book = _load_odds_book(scraper, rid, cfg, fresh=args.fresh, kinds=SCAN_ODDS_KINDS)
+            _apply_win_odds(race, book)
             rec = recommend_buy_methods(build_feature_table(race), book, bankroll=args.budget)
             label = f"{track}{n}R"
             if rec and rec.get("confident"):
@@ -748,6 +765,11 @@ def main(argv: list[str] | None = None) -> None:
                 "--fresh",
                 action="store_true",
                 help="オッズのキャッシュを無視して必ず最新を取得（発走直前の判断用）",
+            )
+            sp.add_argument(
+                "--no-model",
+                action="store_true",
+                help="LightGBM勝率モデルを使わず、市場オッズ由来の確率だけでEVを計算（データが少ないうちはこちらが安全）",
             )
             sp.add_argument(
                 "--gemini",

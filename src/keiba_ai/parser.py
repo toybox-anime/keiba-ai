@@ -75,9 +75,14 @@ def _parse_horse(tr, name_td) -> Horse | None:
     a = name_td.select_one("span.mainHorse a")
     name = a.get_text(strip=True) if a else ""
 
-    # 単勝オッズ = 馬名セル末尾の小数
-    floats = _FLOAT.findall(name_td.get_text(" ", strip=True))
-    odds = float(floats[-1]) if floats else None
+    # 単勝オッズ: 新レイアウトは独立セル td.odds、旧レイアウトは馬名セル末尾の小数
+    odds = None
+    if odds_txt := _cell_text(tr, "td.odds"):
+        if fl := _FLOAT.findall(odds_txt):
+            odds = float(fl[0])
+    if odds is None:
+        floats = _FLOAT.findall(name_td.get_text(" ", strip=True))
+        odds = float(floats[-1]) if floats else None
 
     # 性齢・斤量・騎手・調教師
     sex_age = weight = jockey = trainer = None
