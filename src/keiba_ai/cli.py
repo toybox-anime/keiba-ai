@@ -90,7 +90,8 @@ def cmd_predict(args, cfg: dict) -> None:
     race_id = _resolve_race_id(args, scraper, cfg)
 
     print(f"[1/3] 出馬表を取得中... ({race_id})", file=sys.stderr)
-    html = scraper.get(scraper.race_card_url(race_id), max_age_sec=cfg["scraper"]["cache_ttl_hours"] * 3600)
+    # 出馬表には単勝オッズが載るため短命キャッシュ（朝の発売前キャッシュを使い回さない）
+    html = scraper.get(scraper.race_card_url(race_id), max_age_sec=0 if args.fresh else cfg["scraper"].get("odds_cache_minutes", 10) * 60)
     race = race_parser.parse_race_card(html, race_id)
     print(f"      → {len(race.horses)} 頭を検出", file=sys.stderr)
 
@@ -234,7 +235,7 @@ def cmd_predict_day(args, cfg: dict) -> None:
     maxr = args.races or 12
     day = next(iter(meetings.values()))[:8]
     day_fmt = f"{day[:4]}-{day[4:6]}-{day[6:8]}"
-    card_age = cfg["scraper"]["cache_ttl_hours"] * 3600
+    card_age = cfg["scraper"].get("odds_cache_minutes", 10) * 60  # 出馬表の単勝オッズは変動するので短命キャッシュ
     print(f"[predict-day] {day_fmt} の予想を生成: {list(meetings)}", file=sys.stderr)
 
     maxcalls = args.max_calls or 12
@@ -392,7 +393,7 @@ def cmd_scan(args, cfg: dict) -> None:
     maxr = args.races or 12
     print(f"[scan] 対象: {list(meetings)} / 各最大{maxr}R を分析（数分かかります）", file=sys.stderr)
     # --fresh なら出馬表も取り直す（単勝オッズは出馬表に載るため、朝のキャッシュだと空のまま）
-    card_age = 0 if args.fresh else cfg["scraper"]["cache_ttl_hours"] * 3600
+    card_age = 0 if args.fresh else cfg["scraper"].get("odds_cache_minutes", 10) * 60  # 単勝オッズ込みのため短命
     found, skipped, day = [], [], ""
 
     for track, mid in meetings.items():
