@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 import os
 
-from .betting import build_plan, build_plan_ev, recommend_buy_methods, wide_suggestions
+from .betting import build_plan, build_plan_ev, recommend_buy_methods, wide_box
 from .features import build_feature_table, summarize_market
 from .models import Race
 from .odds import OddsBook
@@ -68,7 +68,7 @@ def generate_report(
         else:
             plan = build_plan(rows, bankroll, style)                 # 均等フォーメーション
 
-    wide = wide_suggestions(rows, odds_book, bankroll=bankroll)  # ワイドの軸流し/ボックス（金額つき）
+    wide = wide_box(rows, odds_book, bankroll=bankroll)  # 一番のおすすめ＝ワイド3頭ボックス（金額つき）
     recommend = (  # 全券種比較＋おすすめ＋自信のある買い目（金額つき）
         recommend_buy_methods(rows, odds_book, model_probs, bankroll=bankroll) if odds_book else None
     )
@@ -95,7 +95,7 @@ def generate_report(
         "出走馬指標": rows,
         "買い目プラン": plan.to_dict() if plan else "（軍資金未指定のため未生成）",
         "券種比較とおすすめ": recommend or "（オッズ未取得）",
-        "ワイド詳細": wide or "（頭数不足）",
+        "一番のおすすめ_ワイド3頭ボックス": _compact_box_line(wide),
     }
     user_msg = (
         f"方針: {style_text}\n\n"
@@ -104,8 +104,8 @@ def generate_report(
         "①レース概観（距離・馬場・想定される展開・隊列）\n"
         "②【あなたの本命予想】◎○▲△を馬番・馬名つきで選び、近走・脚質・展開・適性から根拠を述べる\n"
         "   （市場の人気順をなぞらず、人気と実力の乖離＝妙味も指摘する）\n"
-        "③【一番のおすすめ買い目】券種比較とおすすめ.best を推す\n"
-        "④【自信のある買い目】confident を券種・組み合わせ・金額つきで提示（ワイド以外の妙味券種も）\n"
+        "③【一番のおすすめ買い目】ワイド3頭ボックスを金額つきで（判定が見送りなら見送りと明記）\n"
+        "④【参考】券種比較の妙味（上級者向け・少額で）\n"
         "⑤買い目プランの金額配分（提示済みの金額をそのまま示す）\n"
         "⑥リスクと注意点\n\n"
         f"```json\n{json.dumps(payload, ensure_ascii=False, indent=2)}\n```"
@@ -123,7 +123,7 @@ def generate_report(
 # Gem（カスタムGemini）に1回だけ設定する指示文（圧縮版・精度維持）。
 GEM_INSTRUCTIONS = """地方競馬(楽天競馬)のプロ予想家。貼られた「出走馬データ＋EV分析」で毎回:
 ①予想:◎○▲△を馬番・馬名で。根拠は近走・脚質・展開・距離/馬場適性・騎手から簡潔に(人気のなぞり禁止、人気と実力の乖離=妙味も指摘)。
-②買い目:軍資金内で券種・組合せ・何円ずつ(EVの妙味を活用、合計超過不可)。
+②買い目:安定重視でワイド3頭ボックス(3点)が本線。貼付の推奨ボックスを予想で入替えるか判断し何円ずつ(合計超過不可)。他券種は参考。
 ③リスク:危険な人気馬、妙味なしなら「見送り」。
 根拠つき・簡潔に。末尾「※馬券は自己責任・20歳以上」。"""
 
@@ -171,7 +171,7 @@ def build_gemini_prompt(
             plan = build_plan_ev(rows, odds_book, bankroll, style)
         else:
             plan = build_plan(rows, bankroll, style)
-    wide = wide_suggestions(rows, odds_book, bankroll=bankroll)
+    wide = wide_box(rows, odds_book, bankroll=bankroll)
     recommend = recommend_buy_methods(rows, odds_book, bankroll=bankroll) if odds_book else None
 
     # --- コンパクト版（トークン節約）: 出走馬 + 妙味1行 + 短い依頼 ---
@@ -182,14 +182,16 @@ def build_gemini_prompt(
             "# 出走馬（近走=左が直近）",
             *_horse_rows_md(rows),
             "",
-            f"# 妙味買い目(EV>1.0・参考): {_compact_value_line(recommend)}",
+            f"# 本線=ワイド3頭ボックス: {_compact_box_line(wide)}",
+            f"# 他券種の妙味(EV>1.0・参考): {_compact_value_line(recommend)}",
             "",
         ]
         if feedback:
             out.append(feedback)
         out += [
             f"# 依頼: ◎○▲△を馬番名つきで（近走・展開・適性・人気妙味から根拠簡潔に）。"
-            f"買い目を券種・組合せ・何円ずつで。{budget}危険な人気馬も一言。",
+            f"買い目はワイド3頭ボックス中心で何円ずつ（あなたの予想で3頭を入替えてもよい）。{budget}"
+            "危険な人気馬・見送り判断も一言。",
             "最後に必ず1行:【PICKS】◎<馬番> ○<馬番> ▲<馬番>（採点用。数字のみ）",
         ]
         return "\n".join(out)
@@ -210,14 +212,14 @@ def build_gemini_prompt(
         *_horse_rows_md(rows),
     ]
 
+    if wide:
+        out += _render_wide_box(wide)
     if recommend:
         out.append("")
         out.append("# ツールのEV分析（参考。割高=妙味のある買い目）")
         out += _render_recommendation(recommend)
     if plan and plan.bets:
         out += _render_plan(plan)
-    if wide:
-        out += _render_wide(wide)
 
     budget_line = f"軍資金は{bankroll:,}円です。" if bankroll else "軍資金は任意で構いません。"
     if gem_mode:
@@ -229,8 +231,8 @@ def build_gemini_prompt(
             "# お願い（必ず守ってください）",
             "1. **あなた自身の本命予想**：◎本命 ○対抗 ▲単穴 △連下 を馬番・馬名つきで選び、",
             "   近走・脚質・想定展開・距離/馬場適性・騎手から根拠を述べる（人気順のなぞりはNG。妙味も指摘）。",
-            f"2. **買い目の提案**：{budget_line}上のEV分析も踏まえ、どの券種をどの組み合わせで"
-            "「何円ずつ」買うか具体的に。合計が軍資金を超えないこと。",
+            f"2. **買い目の提案**：{budget_line}安定重視のため**ワイド3頭ボックス（3点）を本線**に、"
+            "あなたの予想で3頭を入れ替えるべきか判断し「何円ずつ」買うか具体的に。合計が軍資金を超えないこと。",
             "3. **リスク**：危険な人気馬や、見送り推奨ならその旨も。",
             "",
             "※馬券は自己責任・20歳以上。",
@@ -257,12 +259,12 @@ def _offline_report(race: Race, rows: list[dict], market: dict, plan=None, wide=
             f'{r["単勝"] or "-"} | {r["人気"] or "-"} | {r["市場勝率%"] or "-"} | {kin} |'
         )
 
+    if wide:
+        lines += _render_wide_box(wide)
     if recommend:
         lines += _render_recommendation(recommend)
     if plan and plan.bets:
         lines += _render_plan(plan)
-    if wide:
-        lines += _render_wide(wide)
 
     lines += [
         "",
@@ -303,7 +305,7 @@ def _render_recommendation(rec: dict) -> list[str]:
     b = rec["best"]
     out = [
         "",
-        "## 🎯 一番のおすすめ買い方",
+        "## 📊 参考：券種ごとの妙味（上級者向け・買うなら少額で）",
         "",
         f"### ★ {b['券種']}　{b['組']}（{b['馬名']}）",
         "",
@@ -358,47 +360,68 @@ def _render_recommendation(rec: dict) -> list[str]:
     return out
 
 
-def _wide_row(d: dict, with_money: bool) -> str:
-    i, j = d["combo"]
-    odds = f'{d["odds"][0]}-{d["odds"][1]}' if "odds" in d else "-"
-    ev = d.get("ev", "-")
-    base = f'| {i}-{j} | {d["names"][0]} − {d["names"][1]} | {odds} | {d["prob"]}% | {ev} |'
-    if with_money:
-        base += f' {d.get("stake", 0):,}円 |'
-    return base
+_BOX_BADGE = {"buy": "✅ 買い", "recheck": "⚠️ 直前に再確認", "skip": "❌ 見送り推奨", "noodds": "⏳ オッズ未取得"}
 
 
-def _wide_block(title: str, items: list[dict], with_money: bool) -> list[str]:
-    head = "| 組み合わせ | 馬名 | オッズ | 的中率(目安) | EV |" + (" 金額 |" if with_money else "")
-    sep = "|---|---|---|---|---|" + ("---|" if with_money else "")
-    out = ["", title, "", head, sep]
-    out += [_wide_row(d, with_money) for d in items]
-    if with_money:
-        total = sum(d.get("stake", 0) for d in items)
-        out.append(f'| **合計** | | | | | **{total:,}円** |')
-    return out
+def _box_label(box: dict) -> str:
+    return "・".join(map(str, box["box_nums"]))
 
 
-def _render_wide(wide: dict) -> list[str]:
-    ax = wide["axis"]
-    box = "・".join(map(str, wide["box_nums"]))
-    money = bool(wide.get("bankroll"))
+def _render_wide_box(wb: dict) -> list[str]:
+    """一番のおすすめ＝ワイド3頭ボックス（3点）."""
+    m, names = wb["main"], wb["names"]
+    money = bool(wb.get("bankroll"))
+    horses = " / ".join(f"{n} {names.get(n, '')}" for n in m["box_nums"])
+    kind = "人気上位3頭" if wb["is_top3"] else "上位5頭から妙味のある3頭"
+    stats = f"的中率(どれか1点当たる) {m['hit']}%"
+    if "ev" in m:
+        stats += f" / 合成オッズ {m['synth']}倍 / 期待値(EV) {m['ev']}"
     out = [
         "",
-        "## ワイドのおすすめ（的中率重視）",
+        f"## 🎯 一番のおすすめ：ワイド3頭ボックス（{_box_label(m)}）　{_BOX_BADGE[wb['status']]}",
         "",
-        "ワイドは「選んだ2頭がともに3着以内」で的中。点数が少なく当てやすい買い方です。",
+        f"- 3頭（{kind}）: {horses}",
+        f"- {stats}",
+        f"- {wb['reason']}",
+        "",
+        "| 組み合わせ | 馬名 | オッズ | 的中率 |" + (" 金額 | 当たったら |" if money else ""),
+        "|---|---|---|---|" + ("---|---|" if money else ""),
     ]
+    for d in m["items"]:
+        i, j = d["combo"]
+        odds = f'{d["odds"][0]}-{d["odds"][1]}' if "odds" in d else "-"
+        row = f'| {i}-{j} | {d["names"][0]} − {d["names"][1]} | {odds} | {d["prob"]}% |'
+        if money:
+            pay = f'{d["payout"]:,}円〜' if "payout" in d else "-"
+            row += f' {d.get("stake", 0):,}円 | {pay} |'
+        out.append(row)
     if money:
-        out.append(f"※ 軍資金 {wide['bankroll']:,}円 を**自信度（的中率）に応じて配分**した「何円ずつ」つき（①か②どちらかを選ぶ）。")
-    out += _wide_block(
-        f"### ① 軸流し（本命 {ax['馬番']}{ax['馬名']} を軸に相手へ流す）", wide["nagashi"], money
-    )
-    out += _wide_block(f"### ② ボックス（上位3頭 {box} の総当たり＝3点）", wide["box"], money)
+        total = sum(d.get("stake", 0) for d in m["items"])
+        out.append(f"| **合計** | | | | **{total:,}円** | |")
     out += [
         "",
-        "**買い方**: 楽天競馬で券種「ワイド」を選び、上の組み合わせを表の金額で購入します。",
-        "迷ったら軸流し（本命を信頼）、本命が不安なら上位3頭ボックスが無難です。",
-        "（①と②は別々の買い方。両方ではなくどちらかを選んでください）",
+        "> 3頭のうち2頭が3着以内なら的中（1頭崩れてもOK）。3頭とも3着以内なら3点すべて的中。",
+        "> 金額は「どの1点が当たっても払戻がほぼ同じ」になる配分。楽天競馬では「通常」投票で3点を"
+        "個別に購入（同額でよければ「ボックス」投票でも可）。",
     ]
+    if wb["alts"]:
+        out += [
+            "",
+            "### 他の候補ボックス",
+            "",
+            "| 3頭 | 的中率 | 合成オッズ | EV |",
+            "|---|---|---|---|",
+        ]
+        out += [f'| {_box_label(b)} | {b["hit"]}% | {b["synth"]}倍 | {b["ev"]} |' for b in wb["alts"]]
     return out
+
+
+def _compact_box_line(wb: dict | None) -> str:
+    if not wb:
+        return "なし"
+    m = wb["main"]
+    stake = "・".join(
+        f'{d["combo"][0]}-{d["combo"][1]}' + (f'{d["stake"]}円' if "stake" in d else "") for d in m["items"]
+    )
+    extra = f",合成{m['synth']}倍,EV{m['ev']}" if "ev" in m else ""
+    return f"{_box_label(m)}（{_BOX_BADGE[wb['status']]},的中{m['hit']}%{extra}）{stake}"

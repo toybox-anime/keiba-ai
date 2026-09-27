@@ -62,6 +62,16 @@ def wide_prob(p: dict[int, float], i: int, j: int) -> float:
     return sum(trio_prob(p, i, j, k) for k in others)
 
 
+def box_hit_prob(p: dict[int, float], nums: tuple[int, ...] | list[int]) -> float:
+    """ワイドボックス: nums のうち2頭以上が3着以内に入る（＝どれか1点は的中）確率."""
+    box = set(nums)
+    return sum(
+        trifecta_prob(p, a, b, c)
+        for a, b, c in permutations(p, 3)
+        if len(box & {a, b, c}) >= 2
+    )
+
+
 def place_prob(p: dict[int, float], i: int) -> float:
     """複勝: i が3着以内に入る確率（1着＋2着＋3着）."""
     if i not in p:

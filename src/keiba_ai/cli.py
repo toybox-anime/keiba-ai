@@ -20,7 +20,7 @@ import yaml
 
 from . import parser as race_parser
 from . import result as race_result
-from .betting import recommend_buy_methods
+from .betting import recommend_buy_methods, wide_box
 from .dataset import append_rows, dataset_stats, load_dataset, race_result_to_rows
 from .grading import (
     append_prediction,
@@ -410,17 +410,20 @@ def cmd_scan(args, cfg: dict) -> None:
                 break  # この開催はここで終わり
             book = _load_odds_book(scraper, rid, cfg, fresh=args.fresh, kinds=SCAN_ODDS_KINDS)
             _apply_win_odds(race, book)
-            rec = recommend_buy_methods(build_feature_table(race), book, bankroll=args.budget)
+            wb = wide_box(build_feature_table(race), book, bankroll=args.budget)
             label = f"{track}{n}R"
-            if rec and rec.get("confident"):
-                b = rec["best"]
-                found.append({"label": label, "rid": rid, "best": b, "n": len(rec["confident"])})
-                print(f"  {label}: ★妙味あり {b['券種']} {b['組']} EV{b['EV']}", file=sys.stderr)
+            if wb and wb["status"] in ("buy", "recheck"):
+                m = wb["main"]
+                found.append({"label": label, "rid": rid, "wb": wb})
+                print(f"  {label}: ★ワイドBOX {'・'.join(map(str, m['box_nums']))} "
+                      f"的中{m['hit']}% 合成{m['synth']}倍 EV{m['ev']}", file=sys.stderr)
             else:
                 skipped.append(label)
-                print(f"  {label}: 妙味なし", file=sys.stderr)
+                print(f"  {label}: 見送り", file=sys.stderr)
 
-    found.sort(key=lambda x: x["best"]["_score"], reverse=True)
+    # 基準クリア(buy)を先に、その中は「EV(上限2)×的中率」の高い順
+    found.sort(key=lambda x: (x["wb"]["status"] == "buy",
+                              min(x["wb"]["main"]["ev"], 2.0) * x["wb"]["main"]["hit"]), reverse=True)
     report = _render_scan(day, list(meetings), found, skipped, args.budget)
     out = ROOT / cfg["paths"]["reports_dir"] / f"scan_{day}.md"
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -432,21 +435,25 @@ def cmd_scan(args, cfg: dict) -> None:
 def _render_scan(day, tracks, found, skipped, budget) -> str:
     lines = [
         f"# 本日の狙い目 {day}",
-        f"- 分析対象: {' / '.join(tracks)} ／ 妙味あり {len(found)}レース・見送り {len(skipped)}レース",
+        f"- 分析対象: {' / '.join(tracks)} ／ 狙い目 {len(found)}レース・見送り {len(skipped)}レース",
         "",
-        "## 🎯 狙い目ランキング（EVプラス＝妙味のあるレース）",
+        "## 🎯 狙い目ランキング（ワイド3頭ボックスが基準を満たすレース）",
     ]
     if found:
         lines += [
-            "| 順位 | レース | 一番のおすすめ | 馬名 | オッズ | 的中率 | EV | 妙味数 |",
+            "| 順位 | レース | ワイドBOX | 馬名 | 的中率 | 合成オッズ | EV | 判定 |",
             "|---|---|---|---|---|---|---|---|",
         ]
         for i, f in enumerate(found, 1):
-            b = f["best"]
+            wb = f["wb"]
+            m = wb["main"]
+            horses = " / ".join(wb["names"].get(n, "") for n in m["box_nums"])
+            verdict = "買い" if wb["status"] == "buy" else "直前に再確認"
             lines.append(
-                f'| {i} | {f["label"]} | {b["券種"]} {b["組"]} | {b["馬名"]} | '
-                f'{b["オッズ"]} | {b["的中率%"]}% | {b["EV"]} | {f["n"]} |'
+                f'| {i} | {f["label"]} | {"・".join(map(str, m["box_nums"]))} | {horses} | '
+                f'{m["hit"]}% | {m["synth"]}倍 | {m["ev"]} | {verdict} |'
             )
+        lines += ["", "> 「直前に再確認」はEVが高すぎ＝売上の薄いオッズの疑い。発走10分前に再計算を。"]
         lines += [
             "",
             "### 詳しい買い目を見る（上位レースを深掘り）",
@@ -456,10 +463,10 @@ def _render_scan(day, tracks, found, skipped, budget) -> str:
             "```",
         ]
     else:
-        lines.append("（妙味のあるレースはありませんでした＝本日は無理に買わないのが正解）")
+        lines.append("（基準を満たすレースはありませんでした＝本日は無理に買わないのが正解）")
 
     if skipped:
-        lines += ["", "## 見送り（EVプラスなし）", "・".join(skipped)]
+        lines += ["", "## 見送り（ワイドBOXが基準未達）", "・".join(skipped)]
     lines += ["", "※馬券は自己責任・20歳以上。EVは目安で、的中を保証しません。"]
     return "\n".join(lines)
 

@@ -348,50 +348,92 @@ def weighted_split(weights: list[float], bankroll: int) -> list[int]:
     return stakes
 
 
-def wide_suggestions(
-    rows: list[dict], book: OddsBook | None = None, *, n_partners: int = 3, bankroll: int | None = None
-) -> dict | None:
-    """ワイドの推奨組み合わせ（軸流し・ボックス）を作る.
+# ワイド3頭ボックスの採用基準（安定重視の既定買い方）
+BOX_MIN_HIT = 0.40      # ボックス全体の的中率（どれか1点当たる確率）の下限
+BOX_MIN_SYNTH = 1.2     # 合成オッズの下限。これ未満は当たっても儲けがほぼ出ない（トリガミ）
+BOX_EV_SUSPECT = 2.0    # EVがこれ超は売上の薄い早い時間帯のオッズを疑う（直前に再確認）
 
-    オッズ(book)があれば的中確率・EVも添える。買い目配分とは別の「買い方ガイド」。
+
+def wide_box(
+    rows: list[dict], book: OddsBook | None = None, *, bankroll: int | None = None, pool: int = 5
+) -> dict | None:
+    """ワイド3頭ボックス（3点）の推奨を作る＝このツールの既定の「一番のおすすめ」.
+
+    上位 pool 頭から3頭を選ぶ全組み合わせを評価し、
+    的中率・合成オッズ・期待値の基準を満たすうち「EV(上限2)×的中率」が最大の箱を推す。
+    金額は「どの1点が当たっても払戻がほぼ同じ」になるよう、オッズの逆数で配分する。
+    合成オッズ = 1 / Σ(1/各点オッズ下限)。1点だけ当たったときの払戻倍率（対 投資総額）。
     """
     priced = [r for r in rows if r.get("単勝")]
     if len(priced) < 3:
         return None
     ranked = rank_horses(priced)
-    axis = ranked[0]
-    partners = ranked[1 : 1 + n_partners]
     names = {r["馬番"]: r["馬名"] for r in priced}
     p = evmod.fair_win_probs({r["馬番"]: r["単勝"] for r in priced})
+    has_odds = bool(book and book.wide)
 
-    def annotate(i: int, j: int) -> dict:
-        d = {"combo": (i, j), "names": (names.get(i, ""), names.get(j, ""))}
-        prob = evmod.wide_prob(p, i, j)
-        d["prob"] = round(prob * 100, 1)
-        if book and book.wide:
-            if rng := book.wide.get(frozenset((i, j))):
-                d["odds"] = rng                      # (下限, 上限)
-                d["ev"] = evmod.ev(rng[0], prob)     # 下限で保守的に
-        return d
+    def evaluate(nums: tuple[int, ...]) -> dict:
+        items = []
+        for i, j in combinations(nums, 2):
+            d = {"combo": (i, j), "names": (names.get(i, ""), names.get(j, "")),
+                 "_p": evmod.wide_prob(p, i, j)}
+            d["prob"] = round(d["_p"] * 100, 1)
+            if has_odds and (rng := book.wide.get(frozenset((i, j)))):
+                d["odds"] = rng  # (下限, 上限)。計算は下限で保守的に
+            items.append(d)
+        box = {"box_nums": nums, "items": items, "hit": round(evmod.box_hit_prob(p, nums) * 100, 1)}
+        if items and all("odds" in d and d["odds"][0] > 0 for d in items):
+            inv = sum(1.0 / d["odds"][0] for d in items)
+            box["synth"] = round(1.0 / inv, 2)
+            # 払戻均等配分での期待値 = 合成オッズ × Σ各点の的中率（同時的中も加算）
+            box["ev"] = round(sum(d["_p"] for d in items) / inv, 3)
+        return box
 
-    nagashi = [annotate(axis["馬番"], pt["馬番"]) for pt in partners]
-    box_nums = [axis["馬番"]] + [pt["馬番"] for pt in partners[:2]]  # 上位3頭ボックス
-    box = [annotate(i, j) for i, j in combinations(box_nums, 2)]
+    def ok(b: dict) -> bool:
+        return (
+            "ev" in b and b["hit"] >= BOX_MIN_HIT * 100
+            and b["synth"] >= BOX_MIN_SYNTH and b["ev"] >= 1.0
+        )
 
-    # 軍資金が指定されていれば「何円ずつ」を自信度（的中率）に比例配分
+    def score(b: dict) -> float:
+        return min(b["ev"], BOX_EV_SUSPECT) * b["hit"]
+
+    top3 = tuple(r["馬番"] for r in ranked[:3])
+    cands = [evaluate(c) for c in combinations([r["馬番"] for r in ranked[:pool]], 3)]
+    good = sorted([b for b in cands if ok(b)], key=score, reverse=True)
+    main = good[0] if good else next(b for b in cands if b["box_nums"] == top3)
+
+    if not has_odds or "ev" not in main:
+        status, reason = "noodds", "ワイドのオッズが未取得。発走10分前に --fresh で再計算してください。"
+    elif not good:
+        status = "skip"
+        if main["synth"] < BOX_MIN_SYNTH:
+            reason = f"人気上位ボックスの合成オッズ{main['synth']}倍＝当たってもほぼ儲からない（トリガミ）。"
+        elif main["hit"] < BOX_MIN_HIT * 100:
+            reason = f"的中率{main['hit']}%と低く、安定重視の基準（{int(BOX_MIN_HIT*100)}%）に届かない。"
+        else:
+            reason = f"期待値{main['ev']}で1未満。"
+        reason += "基準を満たす3頭の組が無いので見送り推奨。"
+    elif main["ev"] > BOX_EV_SUSPECT:
+        status = "recheck"
+        reason = (f"期待値{main['ev']}は高すぎ＝売上の薄いオッズの可能性。発走10分前に再計算し、"
+                  f"合成オッズ{BOX_MIN_SYNTH}倍以上・的中率{int(BOX_MIN_HIT*100)}%以上が残っていれば買い。")
+    else:
+        status = "buy"
+        reason = f"的中率{main['hit']}%・合成オッズ{main['synth']}倍・期待値{main['ev']}で基準クリア。"
+
+    # 金額: オッズがあれば払戻均等（オッズの逆数）、無ければ的中率に比例
     if bankroll:
-        for items in (nagashi, box):
-            weights = [d["prob"] for d in items]  # 的中率が高い＝自信あり→多く張る
-            for d, s in zip(items, weighted_split(weights, bankroll)):
-                d["stake"] = s
+        its = main["items"]
+        weights = [1.0 / d["odds"][0] for d in its] if "ev" in main else [d["_p"] for d in its]
+        for d, s in zip(its, weighted_split(weights, bankroll)):
+            d["stake"] = s
+            if "odds" in d:
+                d["payout"] = int(s * d["odds"][0])
 
-    return {
-        "axis": {"馬番": axis["馬番"], "馬名": axis["馬名"]},
-        "box_nums": box_nums,
-        "nagashi": nagashi,
-        "box": box,
-        "bankroll": bankroll,
-    }
+    alts = [b for b in good if b is not main][:3]
+    return {"main": main, "alts": alts, "status": status, "reason": reason,
+            "is_top3": main["box_nums"] == top3, "bankroll": bankroll, "names": names}
 
 
 def _selections_for(bet_type: str, axis: dict, partners: list[dict]) -> list[tuple]:
