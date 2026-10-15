@@ -33,11 +33,13 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: バックフィル
+        timeout-minutes: 300 # 時間切れでも下のコミットは走らせて途中までの分を残す
         run: >-
           python keiba.py backfill
           ${{ inputs.from && format('--from {0}', inputs.from) || '' }}
           ${{ inputs.to && format('--to {0}', inputs.to) || '' }}
       - name: コミット
+        if: always()
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
