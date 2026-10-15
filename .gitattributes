@@ -2,3 +2,6 @@
 * text=auto eol=lf
 # Windows専用バッチはCRLFのまま
 *.bat text eol=crlf
+# 追記型のデータ/ログは、クラウドの同時コミットで競合しても両方の行を残す（競合マーカーを混入させない）
+data/dataset.jsonl merge=union
+data/auto.log merge=union
