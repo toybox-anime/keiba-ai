@@ -53,3 +53,14 @@ def resolve_meeting_id(meetings: dict[str, str], track: str) -> str:
     raise KeyError(
         f"本日の開催に『{track}』が見つかりません。開催中の競馬場: {list(meetings) or '（なし）'}"
     )
+
+
+def meeting_ids_on(html: str, yyyymmdd: str) -> list[str]:
+    """日付指定ページ（/race_card/list/RACEID/<日付>0000000000）から、その日の開催基準ID（末尾00）を返す.
+
+    ページ内のレースリンクのうち、先頭8桁がその日付で中間8桁が0でないものを開催として拾う。
+    当日以外（過去日）でも使えるので、日付をまたいだ遅延実行や取りこぼしの回収に使う。
+    """
+    ids = re.findall(rf"/RACEID/({yyyymmdd}\d{{10}})", html)
+    return sorted({i[:16] + "00" for i in ids if i[8:16] != "00000000"})
+

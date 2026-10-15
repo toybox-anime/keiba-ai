@@ -36,7 +36,7 @@ from .model import WinModel
 from .odds import OddsBook, parse_into
 from .raceid import race_id_for
 from .report import build_gemini_prompt, gem_instructions, generate_report
-from .schedule import parse_meetings, resolve_meeting_id
+from .schedule import meeting_ids_on, parse_meetings, resolve_meeting_id
 from .scraper import PoliteScraper
 from .train import train as train_model
 
@@ -44,6 +44,7 @@ from .train import train as train_model
 EV_ODDS_KINDS = ("tanfuku", "umafuku", "umatan", "wide", "sanrenfuku", "sanrentan")
 # スキャンは主要な連系のみ取得して高速化（単勝は出馬表から取得）
 SCAN_ODDS_KINDS = ("umafuku", "wide", "sanrenfuku")
+AUTO_MIN_HOUR = 12  # auto はこの時刻(JST)より前の実行なら「前日」を収集する（cron遅延で日付をまたいだ対策）
 
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -497,60 +498,46 @@ def _add_days(yyyymmdd: int, n: int) -> int:
     return int(d.strftime("%Y%m%d"))
 
 
-def _track_latest(rows: list[dict]) -> dict[str, tuple[int, int, int]]:
-    """各競馬場(場コード4桁) の最新開催 (日付, 開催回, 日次) を返す."""
-    latest: dict[str, tuple[int, int, int]] = {}
-    for r in rows:
-        rid = r["race_id"]
-        date, middle = int(rid[:8]), rid[8:16]
-        track, kk, dd = middle[:4], int(middle[4:6]), int(middle[6:8])
-        if track not in latest or date > latest[track][0]:
-            latest[track] = (date, kk, dd)
-    return latest
-
-
-def _try_meeting(scraper, cfg, date_int: int, track: str, kk: int, dd: int) -> tuple[bool, int]:
-    """候補開催（日付・場・開催回・日次）を試す。1Rに馬がいれば有効とみなし全R収集."""
-    added = 0
-    for n in range(1, 13):
-        rid = f"{date_int:08d}{track}{kk:02d}{dd:02d}{n:02d}"
-        try:
-            r = _collect_one(scraper, rid, cfg, quiet=True)
-        except Exception:  # noqa: BLE001
-            break
-        if not r["exists"]:
-            if n == 1:
-                return (False, 0)  # 開催なし
-            break
-        added += r["added"]
-    return (True, added)
+def _meetings_on(scraper: PoliteScraper, yyyymmdd: str) -> list[str]:
+    """指定日の開催基準ID一覧（過去日も可）."""
+    return meeting_ids_on(scraper.get(scraper.date_card_url(yyyymmdd), max_age_sec=3600), yyyymmdd)
 
 
 def cmd_backfill(args, cfg: dict) -> None:
-    """過去数日を、RACEIDの規則から推測して収集する（ベストエフォート）."""
+    """指定期間の全開催を日付ごとの開催一覧から収集する（取りこぼしの回収）.
+
+    既にデータセットにあるレースは取得しない。期間は --from/--to、または --lookback（直近N日）。
+    """
     scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
     end = int(args.to) if args.to else _add_days(int(datetime.now().strftime("%Y%m%d")), -1)
-    rows = load_dataset(ROOT / "data/dataset.jsonl") if (ROOT / "data/dataset.jsonl").exists() else []
-    latest = _track_latest(rows)
-    print(f"[backfill] 対象終了日: {end} / 既知の競馬場 {len(latest)}場から推測収集", file=sys.stderr)
+    start = int(args.from_) if args.from_ else _add_days(end, -((args.lookback or 3) - 1))
+    known = {r["race_id"] for r in load_dataset(ROOT / "data/dataset.jsonl")}
+    print(f"[backfill] {start} 〜 {end} を収集", file=sys.stderr)
 
-    total = 0
-    for track, (last_date, kk, dd) in sorted(latest.items()):
-        if _add_days(last_date, 14) < end:
-            continue  # 古すぎる開催はスキップ
-        cur = _add_days(last_date, 1)
-        while cur <= end:
-            ok, added = _try_meeting(scraper, cfg, cur, track, kk, dd + 1)
-            if ok:
-                dd += 1
-            else:  # 開催回が変わった可能性 → 次の回の初日を試す
-                ok, added = _try_meeting(scraper, cfg, cur, track, kk + 1, 1)
-                if ok:
-                    kk, dd = kk + 1, 1
-            if ok:
-                total += added
-                print(f"  {cur} 場{track} 回{kk}日{dd}: {added}行", file=sys.stderr)
-            cur = _add_days(cur, 1)
+    total, cur = 0, start
+    while cur <= end:
+        try:
+            mids = _meetings_on(scraper, str(cur))
+        except Exception as e:  # noqa: BLE001
+            print(f"  {cur} 開催一覧の取得に失敗: {type(e).__name__}: {e}", file=sys.stderr)
+            mids = []
+        day_added = 0
+        for mid in mids:
+            for n in range(1, 13):
+                rid = race_id_for(mid, n)
+                if rid in known:
+                    continue
+                try:
+                    r = _collect_one(scraper, rid, cfg, quiet=True)
+                except Exception:  # noqa: BLE001
+                    break
+                if not r["exists"]:
+                    break
+                day_added += r["added"]
+        if mids:
+            _log_auto(f"backfill {cur}: {len(mids)}開催 {day_added}行追記")
+        total += day_added
+        cur = _add_days(cur, 1)
 
     print(f"[backfill] 完了。追記 {total}行。現状: {dataset_stats(ROOT / 'data/dataset.jsonl')}", file=sys.stderr)
 
@@ -653,23 +640,29 @@ def cmd_auto(args, cfg: dict) -> None:
     ログをコミット・確認できるように）。
     """
     scraper = _make_scraper(cfg)
-    # 夜1回の実行。必ず「本日」の開催一覧を最新取得する（キャッシュ不使用）。
+    # GitHubのcronは数時間遅れて日付をまたぐことがあるので、昼より前の実行なら前日を対象にする。
+    now = datetime.now()
+    target = now if now.hour >= AUTO_MIN_HOUR else now - timedelta(days=1)
+    day = target.strftime("%Y%m%d")
     try:
-        landing = scraper.get(scraper.race_card_landing_url(), max_age_sec=0)
+        mids = _meetings_on(scraper, day)
     except Exception as e:  # noqa: BLE001
         _log_auto(f"開催一覧の取得に失敗: {type(e).__name__}: {e}")
         _log_auto("→ クラウドIPが楽天にブロックされている可能性があります。")
         return
-    meetings = parse_meetings(landing)
-    if not meetings:
-        _log_auto(f"本日の開催が見つかりませんでした（取得HTML長={len(landing)}）。")
+    if not mids:
+        _log_auto(f"{day} の開催が見つかりませんでした。")
         return
-    _log_auto(f"自動収集開始。本日の開催: {list(meetings)}")
+    meetings = {mid[8:12]: mid for mid in mids}  # 場コード → 開催ID
+    _log_auto(f"自動収集開始。対象日 {day}（{now:%H:%M}実行）の開催: {list(meetings)}")
 
+    known = {r["race_id"] for r in load_dataset(ROOT / "data/dataset.jsonl")}
     grew = 0
     for track, mid in meetings.items():
         for n in range(1, (args.races or 12) + 1):
             rid = race_id_for(mid, n)
+            if rid in known:  # 収集済み（再実行・backfill済み）は取り直さない
+                continue
             try:
                 r = _collect_one(scraper, rid, cfg, quiet=True)
             except Exception as e:  # noqa: BLE001
@@ -737,6 +730,8 @@ def main(argv: list[str] | None = None) -> None:
         sp = sub.add_parser(name)
         if name == "backfill":
             sp.add_argument("--to", help="収集する最終日 YYYYMMDD（既定は昨日）")
+            sp.add_argument("--from", dest="from_", help="収集する開始日 YYYYMMDD（省略時は --lookback）")
+            sp.add_argument("--lookback", type=int, help="終了日から遡って収集する日数（既定3）")
         if name not in ("train", "auto", "backfill"):
             sp.add_argument("--race-id", help="18桁のRACEID")
             sp.add_argument("--date", help="開催日 YYYY-MM-DD")

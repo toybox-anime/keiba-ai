@@ -97,6 +97,10 @@ python keiba.py train                       # 30レース以上で学習
 クラウドで自動実行**されます（PC不要・無料）。最新データは `git pull` で取り込めます。
 
 - **毎晩の収集＋学習**：`.github/workflows/collect.yml`（JST 20:17/21:47）。API不要・無料。
+  GitHubのcronは数時間遅れて日付をまたぐことがあるため、`auto` は**12時より前の実行なら前日分**を収集し、
+  続けて `backfill --lookback 3` で直近3日の取りこぼしも回収する（収集済みレースは再取得しない）。
+- **まとめて回収**：`.github/workflows/backfill.yml`（手動）。開始日・最終日を入れて Run workflow。
+  ローカルなら `python keiba.py backfill --from 20260827 --to 20260905`。
 - **朝の自動予想（Gemini API）**：`.github/workflows/predict.yml` は**現在停止中**。
   有料APIの費用対効果が見合わなかったため無効化（`schedule` をコメントアウト）。
   再開したい場合は predict.yml の `schedule` を復活させ、Gemini APIキーを課金設定にする。

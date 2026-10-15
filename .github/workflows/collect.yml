@@ -2,6 +2,7 @@ name: daily-collect
 
 # 毎晩クラウドで「本日の全開催を収集＋（データが増えれば）再学習」し、
 # 更新した dataset / model をリポジトリにコミットして残す。
+# cronが遅れて日付をまたいだ場合 auto は本日分をスキップし、backfill が前日分を回収する。
 on:
   schedule:
     # GitHubのcronは混雑で数時間遅延する。JST日付が変わる前（UTC15:00前）に結果を拾えるよう、
@@ -17,7 +18,7 @@ permissions:
   contents: write # dataset/model をコミットするため
 
 concurrency:
-  group: daily-collect
+  group: keiba-collect # backfill と同じグループ（同時実行しない）
   cancel-in-progress: false
 
 jobs:
@@ -40,15 +41,15 @@ jobs:
       - name: 収集＋学習（auto）
         run: python keiba.py auto
 
-      - name: 答え合わせ（朝の予想を結果で採点）
-        run: python keiba.py grade || true
+      - name: 取りこぼし回収（直近3日・遅延実行の前日分もここで拾う）
+        run: python keiba.py backfill --lookback 3
 
       - name: 変更をコミット
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git pull --rebase --autostash origin main || true
-          git add -f data/dataset.jsonl models/ data/auto.log predictions/ledger.jsonl predictions/record.md 2>/dev/null || true
+          git add -f data/dataset.jsonl models/ data/auto.log 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "変更なし（新規データなし）"
           else

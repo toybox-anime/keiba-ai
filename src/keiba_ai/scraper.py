@@ -45,6 +45,10 @@ class PoliteScraper:
         """本日開催一覧（本日の発売情報テーブル）を含むランディング."""
         return f"{self.base_url}/race_card/list/"
 
+    def date_card_url(self, yyyymmdd: str) -> str:
+        """指定日の開催一覧（過去日も可）."""
+        return f"{self.base_url}/race_card/list/RACEID/{yyyymmdd}0000000000"
+
     def race_card_url(self, race_id: str) -> str:
         return f"{self.base_url}/race_card/list/RACEID/{race_id}"
 

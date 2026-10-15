@@ -1,16 +1,16 @@
 name: backfill
 
-# 過去数日を推測収集する一回限りの手動ワークフロー。
-# このファイルを push すると自動で走る（動作確認用トリガー）。
+# 取りこぼした過去分を、日付ごとの開催一覧からまとめて収集する手動ワークフロー（長期停止からの復旧用）。
+# 6時間制限があるので、長期間なら10日前後ずつ区切って複数回に分けて実行する。
 on:
   workflow_dispatch:
     inputs:
+      from:
+        description: "収集する開始日 YYYYMMDD（空欄=最終日の3日前）"
+        default: ""
       to:
-        description: "収集する最終日 YYYYMMDD"
-        default: "20260709"
-  push:
-    branches: [main]
-    paths: [".github/workflows/backfill.yml"]
+        description: "収集する最終日 YYYYMMDD（空欄=昨日）"
+        default: ""
 
 permissions:
   contents: write
@@ -33,16 +33,19 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: バックフィル
-        run: python keiba.py backfill --to "${{ github.event.inputs.to || '20260709' }}"
+        run: >-
+          python keiba.py backfill
+          ${{ inputs.from && format('--from {0}', inputs.from) || '' }}
+          ${{ inputs.to && format('--to {0}', inputs.to) || '' }}
       - name: コミット
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git pull --rebase --autostash origin main || true
-          git add -f data/dataset.jsonl models/ 2>/dev/null || true
+          git add -f data/dataset.jsonl models/ data/auto.log 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "変更なし（収集ゼロ）"
           else
-            git commit -m "chore: backfill 過去分の収集"
+            git commit -m "chore: backfill ${{ inputs.from }}〜${{ inputs.to }}"
             git push
           fi
