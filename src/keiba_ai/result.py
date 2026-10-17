@@ -76,9 +76,11 @@ def combo_key(kind: str, nums) -> str:
 
 
 def parse_payouts(html: str) -> dict[str, dict[str, int]]:
-    """払戻ページ → {券種キー: {組み合わせキー: 100円あたり払戻(円)}}。未確定なら空 dict.
+    """競走成績ページ → {券種キー: {組み合わせキー: 100円あたり払戻(円)}}。未確定なら空 dict.
 
     表は「th(券種) → td.number(組, <br>区切り) → td.money(円, <br>区切り)」が横に2組並ぶ形。
+    ※ 払戻一覧ページ（race_dividend/list）は開催の全レースが新しい順に並ぶので渡さないこと。
+      先頭の表＝最新レースの払戻になる。1レース分だけ載る競走成績ページ（race_performance）を使う。
     """
     soup = BeautifulSoup(html, "lxml")
     table = soup.find("table", attrs={"summary": "払戻金"})

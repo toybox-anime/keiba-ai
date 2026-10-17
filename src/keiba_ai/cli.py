@@ -212,8 +212,10 @@ def cmd_paper(args, cfg: dict) -> None:  # noqa: ARG001
     """紙上の買い目を払戻と照合し、戦略（券種）ごとの成績を表示する."""
     scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
     max_age = cfg["scraper"]["cache_ttl_hours"] * 3600
+    # 払戻は競走成績ページ（1レース分）から取る。払戻一覧ページ(dividend_url)は開催の全レースが
+    # 新しい順に並ぶため、先頭の表＝最新レースを拾ってしまう（2026-10-17に判明）。
     n = paper.grade(PAPER_PATH, lambda rid: race_result.parse_payouts(
-        scraper.get(scraper.dividend_url(rid), max_age_sec=max_age)))
+        scraper.get(scraper.result_url(rid), max_age_sec=max_age)))
     md = paper.render(paper.load(PAPER_PATH))
     out = ROOT / "predictions" / "paper_record.md"
     out.write_text(md, encoding="utf-8")
