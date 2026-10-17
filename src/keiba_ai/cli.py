@@ -142,14 +142,15 @@ def cmd_predict(args, cfg: dict) -> None:
         return
 
     # --- 通常モード: Claudeでレポート生成 ---
+    # 2026-10 の検証(4,676R・時系列分割)で、勝率モデルは市場オッズより有意に悪かったため既定は不使用。
     win_model = None
-    if getattr(args, "no_model", False):
-        print("[EV] 勝率モデル不使用（市場オッズ由来の確率でEV計算）", file=sys.stderr)
-    else:
+    if getattr(args, "use_model", False):
         _maybe_retrain()  # データが十分なら（インタラクティブ環境で）モデル自動更新
         win_model = WinModel.load()
         if win_model is not None:
-            print("[EV] 学習済み勝率モデルを使用", file=sys.stderr)
+            print("[EV] 学習済み勝率モデルを使用（実験用）", file=sys.stderr)
+    else:
+        print("[EV] 市場オッズ由来の確率でEV計算", file=sys.stderr)
 
     print("[3/3] レポートを生成中...", file=sys.stderr)
     rep = cfg["report"]
@@ -770,9 +771,13 @@ def main(argv: list[str] | None = None) -> None:
                 help="オッズのキャッシュを無視して必ず最新を取得（発走直前の判断用）",
             )
             sp.add_argument(
+                "--model", dest="use_model", action="store_true",
+                help="実験用: LightGBM勝率モデルでEVを計算（検証で市場オッズより悪かったため既定は不使用）",
+            )
+            sp.add_argument(
                 "--no-model",
                 action="store_true",
-                help="LightGBM勝率モデルを使わず、市場オッズ由来の確率だけでEVを計算（データが少ないうちはこちらが安全）",
+                help="（既定動作。互換のため残している）市場オッズ由来の確率だけでEVを計算",
             )
             sp.add_argument(
                 "--gemini",

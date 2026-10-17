@@ -83,7 +83,11 @@ python keiba.py scan --track 高知 --budget 5000
 
 ## データ収集・勝率モデル
 
-過去レースを集めて `train` するとLightGBM勝率モデルが `predict` に使われます。
+過去レースを集めて `train` するとLightGBM勝率モデルを学習します（`predict --model` で実験的に使用）。
+
+> **既定ではモデルを使いません。** 2026-10の検証（4,676レース、9/15以降をテスト）で、モデルの勝率は
+> 市場オッズより有意に悪く（今の方式）、改良版でも誤差の範囲で同等でした。モデルの買い目は回収率70〜90%。
+> データが増えたら `python scripts/backtest_model.py` で再検証し、市場に勝てたら採用を検討します。
 ```powershell
 python keiba.py collect-day --track 大井   # 1開催分を収集（約20分）
 python keiba.py train                       # 30レース以上で学習
