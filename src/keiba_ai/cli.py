@@ -43,6 +43,7 @@ AUTO_MIN_HOUR = 12  # auto はこの時刻(JST)より前の実行なら「前日
 
 ROOT = Path(__file__).resolve().parents[2]
 PAPER_PATH = ROOT / "predictions" / "paper.jsonl"  # 紙上の買い目（ペーパートレード）
+PAPER_MAX_LEAD_MIN = 60  # 発走の何分前以内の分析を紙上記録するか（それより前は売上が薄くオッズが当てにならない）
 
 
 def load_config() -> dict:
@@ -179,18 +180,27 @@ def _post_time(card_html: str) -> str | None:
 
 
 def _record_paper(race, book: OddsBook | None, budget, label: str, card_html: str, *, source: str) -> None:
-    """紙上の買い目を記録（発走前の当日レースのみ。発走後の最終オッズで記録すると成績が良く見えるため）."""
+    """紙上の買い目を記録（当日・発走前 PAPER_MAX_LEAD_MIN 分以内の分析のみ）.
+
+    発走後の最終オッズで記録すると成績が良く見え、発売直後の薄いオッズで記録すると
+    実際に買う判断（発走直前）とずれるため、どちらも記録しない。
+    """
     if not book or not book.wide:
         return
     now = datetime.now()
     post = _post_time(card_html)
-    if race.race_id[:8] != now.strftime("%Y%m%d") or not post or now.strftime("%H:%M") >= post:
+    if race.race_id[:8] != now.strftime("%Y%m%d") or not post:
+        return
+    lead = (datetime.strptime(f"{race.race_id[:8]} {post}", "%Y%m%d %H:%M") - now).total_seconds() / 60
+    if not 0 < lead <= PAPER_MAX_LEAD_MIN:
         return
     try:
         rows = build_feature_table(race)
         wb = wide_box(rows, book, bankroll=budget or 1500)
         rec = recommend_buy_methods(rows, book, bankroll=budget) if book.has_combos() else None
         entries = paper.build_entries(race.race_id, label, rows, book, wb, rec, source=source)
+        for e in entries:
+            e["post"] = post
         paper.record(entries, PAPER_PATH, race_id=race.race_id)
         if entries:
             print(f"[紙上記録] {label}: {' / '.join(e['strategy'] for e in entries)}", file=sys.stderr)
