@@ -26,15 +26,6 @@ from . import parser as race_parser
 from . import result as race_result
 from .betting import recommend_buy_methods, wide_box
 from .dataset import append_rows, dataset_stats, load_dataset, race_result_to_rows
-from .grading import (
-    append_prediction,
-    grade_from_dividend,
-    load_ledger,
-    parse_picks,
-    recent_feedback_line,
-    save_ledger,
-    summarize,
-)
 from .features import build_feature_table
 from .model import WinModel
 from .odds import OddsBook, parse_into
@@ -267,167 +258,6 @@ def cmd_calibrate(args, cfg: dict) -> None:
     out.write_text(html, encoding="utf-8")
     print(f"保存: {out} ({len(html):,} bytes)", file=sys.stderr)
     print("→ このHTMLを開き、出走表テーブルのセレクタ／列順を parser.py に反映してください。", file=sys.stderr)
-
-
-def cmd_predict_day(args, cfg: dict) -> None:
-    """本日の全レースを Gemini に自動予想させ、predictions/日付.md に保存する（朝の自動実行向け）."""
-    from . import gemini_client
-
-    scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
-    if args.track or args.race_id:
-        meetings = {(args.track or "指定開催"): _resolve_meeting_id(args, scraper, cfg)}
-    else:
-        landing = scraper.get(scraper.race_card_landing_url(), max_age_sec=0)
-        meetings = parse_meetings(landing)
-    if not meetings:
-        print("本日の開催が見つかりません。", file=sys.stderr)
-        return
-
-    model = cfg.get("gemini", {}).get("model", gemini_client.DEFAULT_MODEL)
-    maxr = args.races or 12
-    day = next(iter(meetings.values()))[:8]
-    day_fmt = f"{day[:4]}-{day[4:6]}-{day[6:8]}"
-    card_age = cfg["scraper"].get("odds_cache_minutes", 10) * 60  # 出馬表の単勝オッズは変動するので短命キャッシュ
-    print(f"[predict-day] {day_fmt} の予想を生成: {list(meetings)}", file=sys.stderr)
-
-    maxcalls = args.max_calls or 12
-
-    # --- 第1段階: 全レースを評価（オッズ取得＋妙味スコア算出）。Geminiはまだ呼ばない ---
-    races: list[dict] = []
-    for track, mid in meetings.items():
-        for n in range(1, maxr + 1):
-            rid = race_id_for(mid, n)
-            try:
-                race = race_parser.parse_race_card(
-                    scraper.get(scraper.race_card_url(rid), max_age_sec=card_age), rid
-                )
-            except Exception:  # noqa: BLE001
-                race = None
-            if not race or not race.horses:
-                break
-            try:  # 1レースの取得/評価でコケても全体を止めない
-                book = _load_odds_book(scraper, rid, cfg, kinds=SCAN_ODDS_KINDS)
-                _apply_win_odds(race, book)
-                rec = recommend_buy_methods(build_feature_table(race), book, bankroll=args.budget)
-            except Exception as e:  # noqa: BLE001
-                print(f"  {track}{n}R 評価エラー(スキップ): {type(e).__name__}: {e}", file=sys.stderr)
-                continue
-            value = bool(rec and rec.get("confident"))
-            score = rec["best"]["_score"] if value else -1.0
-            races.append({"track": track, "n": n, "race": race, "book": book, "rec": rec, "value": value, "score": score})
-            print(f"  {track}{n}R 評価 (妙味={'有' if value else '無'})", file=sys.stderr)
-
-    # Gemini対象を選ぶ（上位 maxcalls）。妙味レース優先、足りなければ主要レース(後半R)で補充。
-    # 朝は組合せオッズ未確定で妙味が出ないことが多いので、この補充で必ず予想を出す。
-    value_races = sorted([r for r in races if r["value"]], key=lambda x: x["score"], reverse=True)
-    if args.all:
-        ranked = races
-    elif len(value_races) >= maxcalls:
-        ranked = value_races
-    else:
-        fillers = sorted([r for r in races if not r["value"]], key=lambda x: x["n"], reverse=True)
-        ranked = value_races + fillers  # 妙味→主要レースの順
-    chosen = {(r["track"], r["n"]) for r in ranked[:maxcalls]}
-
-    # --- 第2段階: レース順に出力。選ばれたレースだけ Gemini 予想 ---
-    out_lines = [
-        f"# {day_fmt} 本日の自動予想（Gemini）", "",
-        f"対象: {' / '.join(meetings)}　｜　自動予想{maxcalls}レース（妙味優先・不足時は主要R）", "",
-    ]
-    feedback = recent_feedback_line(ROOT / "predictions/ledger.jsonl")  # 直近成績で自己補正
-    n_pred = 0
-    for r in races:
-        track, n, race, rec = r["track"], r["n"], r["race"], r["rec"]
-        head = f"## {track}{n}R　{race.title or ''}"
-        if (track, n) in chosen:
-            try:
-                prompt = build_gemini_prompt(
-                    race, bankroll=args.budget, odds_book=r["book"], compact=True, feedback=feedback
-                )
-                pred = gemini_client.generate(prompt, model=model, max_tokens=2500)
-                n_pred += 1
-                # Geminiの◎○▲を台帳に記録（夜に採点する）
-                picks = parse_picks(pred)
-                append_prediction(
-                    {"date": day_fmt, "race_id": race.race_id, "label": f"{track}{n}R",
-                     "graded": False, **picks},
-                    ROOT / "predictions/ledger.jsonl",
-                )
-                print(f"  {track}{n}R 予想生成 ◎{picks.get('honmei')}", file=sys.stderr)
-            except Exception as e:  # noqa: BLE001
-                pred = f"（予想生成に失敗: {type(e).__name__}: {e}）"
-        elif r["value"]:
-            tips = " / ".join(f'{o["券種"]}{o["組"]}(EV{o["EV"]})' for o in (rec.get("confident") or [])[:3])
-            pred = f"妙味あり（自動予想は上位{maxcalls}件のみ）。EV妙味: {tips}"
-        else:
-            pred = "妙味なし → 見送り推奨。"
-        out_lines += [head, "", pred, "", "---", ""]
-
-    out_lines += ["", "※Geminiによる自動予想。馬券は自己責任・20歳以上。朝時点の暫定オッズに基づきます。"]
-    pdir = ROOT / "predictions"
-    pdir.mkdir(parents=True, exist_ok=True)
-    out = pdir / f"{day_fmt}.md"
-    out.write_text("\n".join(out_lines), encoding="utf-8")
-    print(f"\n✅ 予想を保存: {out}（{n_pred}レース）", file=sys.stderr)
-
-
-def cmd_grade(args, cfg: dict) -> None:  # noqa: ARG001
-    """予想台帳を結果と突き合わせて採点し、成績を集計する（夜の自動実行向け）."""
-    scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
-    ledger_path = ROOT / "predictions/ledger.jsonl"
-    ledger = load_ledger(ledger_path)
-    # 払戻ページで採点。"winner"未設定＝未採点 or 旧方式なので（再）採点する
-    todo = [r for r in ledger if "winner" not in r]
-    if not todo:
-        print("[grade] 採点対象なし", file=sys.stderr)
-        return
-    max_age = cfg["scraper"]["cache_ttl_hours"] * 3600
-    done = 0
-    for r in todo:
-        try:
-            div = race_result.parse_dividend(
-                scraper.get(scraper.dividend_url(r["race_id"]), max_age_sec=max_age)
-            )
-        except Exception:  # noqa: BLE001
-            div = {}
-        if grade_from_dividend(r, div) is None:
-            continue  # まだ結果（払戻）が出ていない
-        done += 1
-        mark = "◎的中!" if r.get("hit_win") else ("複勝" if r.get("hit_place") else "×")
-        print(f"  {r['label']} ◎{r.get('honmei')} {mark} 単勝戻{r.get('win_return')}", file=sys.stderr)
-
-    save_ledger(ledger, ledger_path)
-    overall = summarize(ledger, n=100000)
-    recent = summarize(ledger, n=30)
-    print(f"[grade] 採点{done}件。通算{overall} / 直近{recent}", file=sys.stderr)
-
-    # 見やすい成績表を残す
-    def line(s):
-        return (
-            f"◎勝率{s.get('◎勝率%')}% 複勝率{s.get('◎複勝率%')}% ｜ "
-            f"**単勝回収{s.get('◎単勝回収率%','-')}% / 複勝回収{s.get('◎複勝回収率%','-')}%** "
-            f"（{s.get('件数')}レース, 配当集計{s.get('配当集計数','-')}）"
-        )
-
-    rec_md = [
-        "# 成績（答え合わせ）",
-        "",
-        "## 回収率（◎に単勝・複勝を各100円ずつ機械的に賭けた場合）",
-        f"- 通算: {line(overall)}",
-        f"- 直近30: {line(recent)}",
-        "",
-        "> **回収率100%超で理論上プラス**（100円→100円以上戻る）。的中率より回収率が本質。",
-        "",
-        "| 日付 | レース | ◎ | 結果 | 単勝戻 | 複勝戻 |",
-        "|---|---|---|---|---|---|",
-    ]
-    for r in [x for x in ledger if x.get("graded")][-30:][::-1]:
-        res = "◎的中" if r.get("hit_win") else ("複勝圏" if r.get("hit_place") else "×")
-        rec_md.append(
-            f'| {r.get("date")} | {r.get("label")} | {r.get("honmei")} | {res} | '
-            f'{r.get("win_return", "-")} | {r.get("place_return", "-")} |'
-        )
-    (ROOT / "predictions" / "record.md").write_text("\n".join(rec_md), encoding="utf-8")
 
 
 def cmd_scan(args, cfg: dict) -> None:
@@ -816,7 +646,7 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="keiba-ai", description="楽天競馬 予想AIエージェント")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    for name in ("predict", "predict-day", "grade", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto", "paper", "health"):
+    for name in ("predict", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto", "paper", "health"):
         sp = sub.add_parser(name)
         if name == "health":
             sp.add_argument("--to", help="確認する最終日 YYYYMMDD（既定は昨日）")
@@ -830,12 +660,9 @@ def main(argv: list[str] | None = None) -> None:
             sp.add_argument("--date", help="開催日 YYYY-MM-DD")
             sp.add_argument("--track", help="競馬場名 (例: 大井)")
             sp.add_argument("--race", type=int, help="レース番号 1-12")
-        if name in ("scan", "predict-day"):
+        if name == "scan":
             sp.add_argument("--budget", type=int, help="軍資金（円）。買い目金額も算出")
             sp.add_argument("--races", type=int, help="各開催で扱う最大レース数（既定12）")
-        if name == "predict-day":
-            sp.add_argument("--all", action="store_true", help="妙味なしも含め全レースをGemini予想（無料枠に注意）")
-            sp.add_argument("--max-calls", type=int, help="Gemini予想する上位レース数（既定8・無料枠対策）")
         if name == "scan":
             sp.add_argument("--fresh", action="store_true", help="オッズを最新取得（締め切り前）")
         if name == "collect-day":
@@ -888,8 +715,6 @@ def main(argv: list[str] | None = None) -> None:
     cfg = load_config()
     dispatch = {
         "predict": cmd_predict,
-        "predict-day": cmd_predict_day,
-        "grade": cmd_grade,
         "scan": cmd_scan,
         "calibrate": cmd_calibrate,
         "fetch-odds": cmd_fetch_odds,

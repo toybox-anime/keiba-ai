@@ -124,9 +124,7 @@ python keiba.py train                       # 30レース以上で学習
   続けて `backfill --lookback 3` で直近3日の取りこぼしも回収する（収集済みレースは再取得しない）。
 - **まとめて回収**：`.github/workflows/backfill.yml`（手動）。開始日・最終日を入れて Run workflow。
   ローカルなら `python keiba.py backfill --from 20260827 --to 20260905`。
-- **朝の自動予想（Gemini API）**：`.github/workflows/predict.yml` は**現在停止中**。
-  有料APIの費用対効果が見合わなかったため無効化（`schedule` をコメントアウト）。
-  再開したい場合は predict.yml の `schedule` を復活させ、Gemini APIキーを課金設定にする。
+- 朝の自動予想（Gemini API・有料）は2026-10に廃止。予想は手動の `predict --gem`（Geminiチャットに貼付・無料）で行う。
 
 > ローカルのWindowsタスクは廃止済み。収集はクラウドが担当します。
 
@@ -162,7 +160,7 @@ Claudeに書かせたい場合のみ `setx ANTHROPIC_API_KEY "sk-ant-..."`（API
 collect → dataset → train → model ┐
   ↓                                ↓
 scraper → parser → features → betting(EV/ケリー) → report/gemini
-predict-day → Gemini API → ledger（答え合わせ台帳）→ grade → record.md
+predict / scan → paper（紙上の買い目）→ paper コマンドで答え合わせ → paper_record.md
 ```
 
 ### 主なモジュール
@@ -173,14 +171,13 @@ predict-day → Gemini API → ledger（答え合わせ台帳）→ grade → re
 | `parser.py` / `result.py` | 出馬表・結果・払戻ページの解析 |
 | `odds.py` / `ev.py` | オッズ解析・期待値/ハーヴィル/ケリー |
 | `betting.py` | 軍資金からの買い目配分・券種比較 |
-| `report.py` / `gemini_client.py` | 予想依頼文生成・Gemini API呼び出し |
-| `grading.py` | 予想台帳・答え合わせ・回収率 |
+| `report.py` | レポート・Gemini貼り付け用の依頼文生成 |
+| `paper.py` | 紙上の買い目の記録・答え合わせ・回収率 |
 | `model.py` / `train.py` / `dataset.py` | 勝率モデル |
-| `cli.py` | コマンド（predict / scan / collect / train / auto / grade …）|
+| `cli.py` | コマンド（predict / scan / paper / collect / backfill / auto / health / train …）|
 
 ### 既知の課題
-- **採点(grade)の解析にバグ**：結果ページの着順誤読・払戻ページで勝ち馬が固定される
-  ケース（特にばんえい）があり、**回収率の数字は現状信頼できない**。競馬場別の払戻パーサ修正が必要。
-- 意味のある検証は「◎(本命)当て」ではなく「**EV妙味買い目の回収率**」の方。
+- 勝率モデルは市場オッズに勝てていない（`scripts/backtest_model.py` で検証。既定は不使用）。
+- データセットの単勝は最終オッズ。発走直前のオッズ履歴は持っていない。
 
 </details>

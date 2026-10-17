@@ -156,7 +156,6 @@ def _compact_value_line(recommend: dict | None) -> str:
 def build_gemini_prompt(
     race: Race, *, bankroll: int | None = None, style: str = "balanced",
     odds_book: OddsBook | None = None, gem_mode: bool = False, compact: bool = False,
-    feedback: str = "",
 ) -> str:
     """Geminiに渡す『予想依頼文』を生成する.
 
@@ -186,8 +185,6 @@ def build_gemini_prompt(
             f"# 他券種の妙味(EV>1.0・参考): {_compact_value_line(recommend)}",
             "",
         ]
-        if feedback:
-            out.append(feedback)
         out += [
             f"# 依頼: ◎○▲△を馬番名つきで（近走・展開・適性・人気妙味から根拠簡潔に）。"
             f"買い目はワイド3頭ボックス中心で何円ずつ（あなたの予想で3頭を入替えてもよい）。{budget}"

@@ -17,11 +17,6 @@ scraper:
   # 数ページを人間が見る程度の間隔。締め切りに間に合わせるため短め。
   interactive_delay_sec: 5
 
-gemini:
-  # 朝の自動予想で使う Gemini モデル（無料枠）。環境変数 GEMINI_API_KEY を読む。
-  # gemini-flash-latest（常に現行flashを指すエイリアス）。使えなければ自動フォールバック。
-  model: "gemini-flash-latest"
-
 report:
   # Claude API を使う。環境変数 ANTHROPIC_API_KEY を読む。
   model: "claude-opus-4-8"
