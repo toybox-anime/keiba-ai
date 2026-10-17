@@ -12,12 +12,15 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
 
 import yaml
+from bs4 import BeautifulSoup
 
+from . import paper
 from . import parser as race_parser
 from . import result as race_result
 from .betting import recommend_buy_methods, wide_box
@@ -43,10 +46,11 @@ from .train import train as train_model
 # EVモードで取得する券種（全券種）
 EV_ODDS_KINDS = ("tanfuku", "umafuku", "umatan", "wide", "sanrenfuku", "sanrentan")
 # スキャンは主要な連系のみ取得して高速化（単勝は出馬表から取得）
-SCAN_ODDS_KINDS = ("umafuku", "wide", "sanrenfuku")
+SCAN_ODDS_KINDS = ("tanfuku", "umafuku", "wide", "sanrenfuku")  # 単複は複勝の紙上記録に使う
 AUTO_MIN_HOUR = 12  # auto はこの時刻(JST)より前の実行なら「前日」を収集する（cron遅延で日付をまたいだ対策）
 
 ROOT = Path(__file__).resolve().parents[2]
+PAPER_PATH = ROOT / "predictions" / "paper.jsonl"  # 紙上の買い目（ペーパートレード）
 
 
 def load_config() -> dict:
@@ -115,6 +119,7 @@ def cmd_predict(args, cfg: dict) -> None:
         odds_book = _load_odds_book(scraper, race_id, cfg, fresh=args.fresh)
         _apply_win_odds(race, odds_book)
         print(f"[EV] オッズ取得時刻: {datetime.now():%H:%M:%S}（発走直前ほど精度向上）", file=sys.stderr)
+        _record_paper(race, odds_book, args.budget, _race_label(race), html, source="predict")
 
     reports_dir = ROOT / cfg["paths"]["reports_dir"]
     reports_dir.mkdir(parents=True, exist_ok=True)
@@ -168,6 +173,50 @@ def cmd_predict(args, cfg: dict) -> None:
     out.write_text(report_md, encoding="utf-8")
     print(f"\n✅ レポート: {out}\n", file=sys.stderr)
     print(report_md)
+
+
+def _race_label(race) -> str:
+    """'水沢競馬場 8R 出馬表' → '水沢8R'."""
+    m = re.search(r"(\S+?)競馬場\s*(\d+R)", race.title or "")
+    return f"{m.group(1)}{m.group(2)}" if m else race.race_id
+
+
+def _post_time(card_html: str) -> str | None:
+    m = re.search(r"発走[^0-9]{0,10}(\d{1,2}:\d{2})", BeautifulSoup(card_html, "lxml").get_text(" "))
+    return m.group(1).zfill(5) if m else None
+
+
+def _record_paper(race, book: OddsBook | None, budget, label: str, card_html: str, *, source: str) -> None:
+    """紙上の買い目を記録（発走前の当日レースのみ。発走後の最終オッズで記録すると成績が良く見えるため）."""
+    if not book or not book.wide:
+        return
+    now = datetime.now()
+    post = _post_time(card_html)
+    if race.race_id[:8] != now.strftime("%Y%m%d") or not post or now.strftime("%H:%M") >= post:
+        return
+    try:
+        rows = build_feature_table(race)
+        wb = wide_box(rows, book, bankroll=budget or 1500)
+        rec = recommend_buy_methods(rows, book, bankroll=budget) if book.has_combos() else None
+        entries = paper.build_entries(race.race_id, label, rows, book, wb, rec, source=source)
+        paper.record(entries, PAPER_PATH, race_id=race.race_id)
+        if entries:
+            print(f"[紙上記録] {label}: {' / '.join(e['strategy'] for e in entries)}", file=sys.stderr)
+    except Exception as e:  # noqa: BLE001
+        print(f"  ⚠️ 紙上記録に失敗: {type(e).__name__}: {e}", file=sys.stderr)
+
+
+def cmd_paper(args, cfg: dict) -> None:  # noqa: ARG001
+    """紙上の買い目を払戻と照合し、戦略（券種）ごとの成績を表示する."""
+    scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
+    max_age = cfg["scraper"]["cache_ttl_hours"] * 3600
+    n = paper.grade(PAPER_PATH, lambda rid: race_result.parse_payouts(
+        scraper.get(scraper.dividend_url(rid), max_age_sec=max_age)))
+    md = paper.render(paper.load(PAPER_PATH))
+    out = ROOT / "predictions" / "paper_record.md"
+    out.write_text(md, encoding="utf-8")
+    print(f"[paper] 今回採点 {n}件 → {out}\n", file=sys.stderr)
+    print(md)
 
 
 def _load_odds_book(
@@ -403,9 +452,8 @@ def cmd_scan(args, cfg: dict) -> None:
         for n in range(1, maxr + 1):
             rid = race_id_for(mid, n)
             try:
-                race = race_parser.parse_race_card(
-                    scraper.get(scraper.race_card_url(rid), max_age_sec=card_age), rid
-                )
+                card_html = scraper.get(scraper.race_card_url(rid), max_age_sec=card_age)
+                race = race_parser.parse_race_card(card_html, rid)
             except Exception:  # noqa: BLE001
                 race = None
             if not race or not race.horses:
@@ -414,6 +462,7 @@ def cmd_scan(args, cfg: dict) -> None:
             _apply_win_odds(race, book)
             wb = wide_box(build_feature_table(race), book, bankroll=args.budget)
             label = f"{track}{n}R"
+            _record_paper(race, book, args.budget, label, card_html, source="scan")
             if wb and wb["status"] in ("buy", "recheck"):
                 m = wb["main"]
                 found.append({"label": label, "rid": rid, "wb": wb})
@@ -727,7 +776,7 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="keiba-ai", description="楽天競馬 予想AIエージェント")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    for name in ("predict", "predict-day", "grade", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto"):
+    for name in ("predict", "predict-day", "grade", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto", "paper"):
         sp = sub.add_parser(name)
         if name == "backfill":
             sp.add_argument("--to", help="収集する最終日 YYYYMMDD（既定は昨日）")
@@ -804,6 +853,7 @@ def main(argv: list[str] | None = None) -> None:
         "collect": cmd_collect,
         "collect-day": cmd_collect_day,
         "backfill": cmd_backfill,
+        "paper": cmd_paper,
         "train": cmd_train,
         "auto": cmd_auto,
     }

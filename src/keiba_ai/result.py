@@ -82,3 +82,40 @@ def _find_col(header: list[str], keys: tuple[str, ...]) -> int | None:
         if any(k == h or k in h for k in keys):
             return i
     return None
+
+
+# 払戻表の見出し → 券種キー（楽天は馬連を「馬複」と表記）
+_PAYOUT_KIND = {
+    "単勝": "win", "複勝": "place", "ワイド": "wide", "馬複": "quinella", "馬連": "quinella",
+    "三連複": "trio", "馬単": "exacta", "三連単": "trifecta",
+}
+_UNORDERED = {"place", "wide", "quinella", "trio"}
+
+
+def combo_key(kind: str, nums) -> str:
+    """払戻照合用の組み合わせキー。順不同の券種は馬番を昇順に並べる（例 'wide' (8,3) → '3-8'）."""
+    nums = [int(n) for n in nums]
+    return "-".join(map(str, sorted(nums) if kind in _UNORDERED else nums))
+
+
+def parse_payouts(html: str) -> dict[str, dict[str, int]]:
+    """払戻ページ → {券種キー: {組み合わせキー: 100円あたり払戻(円)}}。未確定なら空 dict.
+
+    表は「th(券種) → td.number(組, <br>区切り) → td.money(円, <br>区切り)」が横に2組並ぶ形。
+    """
+    soup = BeautifulSoup(html, "lxml")
+    table = soup.find("table", attrs={"summary": "払戻金"})
+    if table is None:
+        return {}
+    out: dict[str, dict[str, int]] = {}
+    for th in table.find_all("th", attrs={"scope": "row"}):
+        kind = _PAYOUT_KIND.get(th.get_text(strip=True))
+        num_td = th.find_next_sibling("td", class_="number")
+        money_td = th.find_next_sibling("td", class_="money")
+        if not kind or num_td is None or money_td is None:
+            continue
+        combos = [c for c in num_td.get_text("\n", strip=True).split("\n") if re.search(r"\d", c)]
+        yens = [int(re.sub(r"\D", "", m)) for m in money_td.get_text("\n", strip=True).split("\n") if re.search(r"\d", m)]
+        for c, y in zip(combos, yens):
+            out.setdefault(kind, {})[combo_key(kind, re.findall(r"\d+", c))] = y
+    return out
