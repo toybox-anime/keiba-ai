@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import sys
 from datetime import datetime, timedelta
@@ -592,6 +593,45 @@ def cmd_backfill(args, cfg: dict) -> None:
     print(f"[backfill] 完了。追記 {total}行。現状: {dataset_stats(ROOT / 'data/dataset.jsonl')}", file=sys.stderr)
 
 
+def cmd_health(args, cfg: dict) -> None:
+    """収集が止まっていないか確認する。直近の開催日がすべて未収集なら終了コード1（Actionsの失敗通知用）.
+
+    「0行追記」は収集済みでも起こるので見ない。その日の開催一覧とデータセットの開催を突き合わせ、
+    半分以上の開催が入っていればOK。開催の無い日（年末年始など）は判定に入れない。
+    """
+    scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
+    end = int(args.to) if args.to else _add_days(int(datetime.now().strftime("%Y%m%d")), -1)
+    days = [_add_days(end, -i) for i in range(args.days or 2)]
+    have: dict[str, set[str]] = {}
+    for r in load_dataset(ROOT / "data/dataset.jsonl"):
+        have.setdefault(r["race_id"][:8], set()).add(r["race_id"][:16])
+
+    checked, bad, lines = 0, 0, []
+    for d in days:
+        mids = {m[:16] for m in _meetings_on(scraper, str(d))}
+        if not mids:
+            lines.append(f"{d}: 開催なし")
+            continue
+        got = len(mids & have.get(str(d), set()))
+        ok = got * 2 >= len(mids)
+        checked += 1
+        bad += not ok
+        lines.append(f"{d}: 開催{len(mids)} / 収集済み{got} → {'OK' if ok else 'NG'}")
+
+    stopped = checked > 0 and bad == checked
+    msg = ("⚠️ 収集が止まっています: " if stopped else "収集チェックOK: ") + " ／ ".join(lines)
+    _log_auto(msg)
+    if summary := os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(summary, "a", encoding="utf-8") as fp:
+            head = "## ⚠️ 収集が止まっています" if stopped else "## ✅ 収集チェックOK"
+            body = "\n".join(f"- {x}" for x in lines)
+            hint = ("\n\n原因の例: 楽天のページ構成の変更、取得ブロック、cronの遅延。"
+                    "Actionsのログと data/auto.log を確認し、直ったら backfill で回収する。") if stopped else ""
+            fp.write(f"{head}\n\n{body}{hint}\n")
+    if stopped:
+        sys.exit(1)
+
+
 def cmd_collect(args, cfg: dict) -> None:
     """出馬表＋結果を取得し、学習データセットに追記する（1レース）."""
     scraper = _make_scraper(cfg)
@@ -776,8 +816,11 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="keiba-ai", description="楽天競馬 予想AIエージェント")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    for name in ("predict", "predict-day", "grade", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto", "paper"):
+    for name in ("predict", "predict-day", "grade", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto", "paper", "health"):
         sp = sub.add_parser(name)
+        if name == "health":
+            sp.add_argument("--to", help="確認する最終日 YYYYMMDD（既定は昨日）")
+            sp.add_argument("--days", type=int, help="確認する日数（既定2）")
         if name == "backfill":
             sp.add_argument("--to", help="収集する最終日 YYYYMMDD（既定は昨日）")
             sp.add_argument("--from", dest="from_", help="収集する開始日 YYYYMMDD（省略時は --lookback）")
@@ -854,6 +897,7 @@ def main(argv: list[str] | None = None) -> None:
         "collect-day": cmd_collect_day,
         "backfill": cmd_backfill,
         "paper": cmd_paper,
+        "health": cmd_health,
         "train": cmd_train,
         "auto": cmd_auto,
     }

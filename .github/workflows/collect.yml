@@ -56,3 +56,8 @@ jobs:
             git commit -m "chore: 自動収集 $(date -u +%Y-%m-%d)"
             git push
           fi
+
+      # 直近2日の開催がデータに入っていなければ失敗にする → GitHubから失敗通知メールが届く。
+      # コミットの後に置くので、ここで失敗しても集めた分は保存済み。
+      - name: 収集停止チェック
+        run: python keiba.py health
