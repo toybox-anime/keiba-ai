@@ -1588,3 +1588,5 @@
 [2026-10-21 02:37:40] backfill 20261018: 5開催 0行追記
 [2026-10-21 02:37:51] backfill 20261019: 5開催 0行追記
 [2026-10-21 02:37:51] backfill 20261020: 4開催 0行追記
+[2026-10-22 00:58:39] 開催一覧の取得に失敗: RuntimeError: 取得失敗: https://keiba.rakuten.co.jp/race_card/list/RACEID/202610210000000000 (503 Server Error: Service Unavailable for url: https://keiba.rakuten.co.jp/race_card/list/RACEID/202610210000000000)
+[2026-10-22 00:58:39] → クラウドIPが楽天にブロックされている可能性があります。
