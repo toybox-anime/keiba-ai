@@ -450,7 +450,16 @@ def cmd_health(args, cfg: dict) -> None:
 
     checked, bad, lines = 0, 0, []
     for d in days:
-        mids = {m[:16] for m in _meetings_on(scraper, str(d))}
+        try:
+            mids = {m[:16] for m in _meetings_on(scraper, str(d))}
+        except Exception as e:  # noqa: BLE001
+            # 楽天の深夜メンテ等で一覧が取れない日は、データの有無だけで判定する
+            # （1晩の503で通知しない。2日続けてデータが無ければ通知される）
+            got = len(have.get(str(d), set()))
+            checked += 1
+            bad += got == 0
+            lines.append(f"{d}: 開催一覧を取得できず（{type(e).__name__}）/ 収集済み{got} → {'OK' if got else 'NG'}")
+            continue
         if not mids:
             lines.append(f"{d}: 開催なし")
             continue
