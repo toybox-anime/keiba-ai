@@ -19,12 +19,14 @@ from datetime import datetime
 from pathlib import Path
 
 from .betting import BOX_EV_SUSPECT
+from .ev import LAMBDA2, LAMBDA3, WIN_ALPHA
 from .result import combo_key
 
 KIND_OF = {"複勝": "place", "ワイド": "wide", "馬連": "quinella", "三連複": "trio"}
 EV_STRATEGIES = ("複勝", "馬連", "三連複")
 BASELINE = "複勝(1番人気)"
 BOX = "ワイド3頭BOX"
+MODEL_TAG = f"着順補正 α{WIN_ALPHA}/λ{LAMBDA2}/{LAMBDA3}"  # 確率モデルが変わったら成績を分けて集計する
 STRATEGY_ORDER = (BOX, "複勝(EV妙味)", "馬連(EV妙味)", "三連複(EV妙味)", BASELINE)
 
 
@@ -33,7 +35,7 @@ def build_entries(race_id: str, label: str, rows: list[dict], book, wb: dict | N
     """その時点の分析結果から記録すべき紙上の買い目を作る."""
     now = datetime.now().strftime("%Y-%m-%d %H:%M")
     base = {"date": f"{race_id[:4]}-{race_id[4:6]}-{race_id[6:8]}", "race_id": race_id,
-            "label": label, "recorded_at": now, "source": source, "graded": False}
+            "label": label, "recorded_at": now, "source": source, "graded": False, "model": MODEL_TAG}
     out: list[dict] = []
 
     if wb and wb["status"] == "buy":
@@ -139,10 +141,8 @@ def summarize(rows: list[dict]) -> list[dict]:
     return out
 
 
-def render(rows: list[dict]) -> str:
+def _table(rows: list[dict]) -> list[str]:
     lines = [
-        "# 紙上の買い目 成績（ペーパートレード）",
-        "",
         "| 戦略 | レース数 | 的中率 | 投資 | 払戻 | 回収率 | 未確定 |",
         "|---|---|---|---|---|---|---|",
     ]
@@ -151,6 +151,16 @@ def render(rows: list[dict]) -> str:
         hit = f"{s['的中'] / n * 100:.0f}%" if n else "-"
         roi = f"**{s['回収率%']}%**" if s["回収率%"] is not None else "-"
         lines.append(f"| {s['戦略']} | {n} | {hit} | {s['投資']:,}円 | {s['払戻']:,}円 | {roi} | {s['未確定']} |")
+    return lines
+
+
+def render(rows: list[dict]) -> str:
+    current = [r for r in rows if r.get("model") == MODEL_TAG]
+    old = [r for r in rows if r.get("model") != MODEL_TAG]
+    lines = ["# 紙上の買い目 成績（ペーパートレード）", "", f"## 今の確率モデル（{MODEL_TAG}）", ""]
+    lines += _table(current) if current else ["（まだ記録なし）"]
+    if old:
+        lines += ["", "## 参考：補正前のモデル（人気馬の2・3着を過大評価していた時期）", ""] + _table(old)
     lines += [
         "",
         "> 回収率100%超で理論上プラス。30〜50レースまでは運の影響が大きいので、数字は参考程度に。",
