@@ -44,11 +44,14 @@ jobs:
       - name: 取りこぼし回収（直近3日・遅延実行の前日分もここで拾う）
         run: python keiba.py backfill --lookback 3
 
+      - name: 紙上記録の答え合わせ（paper-live が昼に記録した分）
+        run: python keiba.py paper || true
+
       - name: 変更をコミット
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f data/dataset.jsonl models/ data/auto.log 2>/dev/null || true
+          git add -f data/dataset.jsonl models/ data/auto.log predictions/paper.jsonl predictions/paper_record.md 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "変更なし（新規データなし）"
             exit 0

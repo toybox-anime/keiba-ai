@@ -15,6 +15,7 @@ import json
 import os
 import re
 import sys
+import time
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -43,6 +44,7 @@ AUTO_MIN_HOUR = 12  # auto はこの時刻(JST)より前の実行なら「前日
 
 ROOT = Path(__file__).resolve().parents[2]
 PAPER_PATH = ROOT / "predictions" / "paper.jsonl"  # 紙上の買い目（ペーパートレード）
+LIVE_LEAD_MIN = (5, 12)  # live: 発走の何分前の範囲で判定するか（直前の判断を再現）
 PAPER_MAX_LEAD_MIN = 60  # 発走の何分前以内の分析を紙上記録するか（それより前は売上が薄くオッズが当てにならない）
 
 
@@ -184,7 +186,11 @@ def _record_paper(race, book: OddsBook | None, budget, label: str, card_html: st
 
     発走後の最終オッズで記録すると成績が良く見え、発売直後の薄いオッズで記録すると
     実際に買う判断（発走直前）とずれるため、どちらも記録しない。
+    記録はクラウドの live（全レースを発走前に自動判定）が担当する。手元の predict/scan で
+    書くとクラウドの記録とファイルが食い違うので、KEIBA_PAPER_LOCAL=1 のときだけ記録する。
     """
+    if source != "live" and not os.environ.get("KEIBA_PAPER_LOCAL"):
+        return
     if not book or not book.wide:
         return
     now = datetime.now()
@@ -206,6 +212,77 @@ def _record_paper(race, book: OddsBook | None, budget, label: str, card_html: st
             print(f"[紙上記録] {label}: {' / '.join(e['strategy'] for e in entries)}", file=sys.stderr)
     except Exception as e:  # noqa: BLE001
         print(f"  ⚠️ 紙上記録に失敗: {type(e).__name__}: {e}", file=sys.stderr)
+
+
+def _today_schedule(scraper: PoliteScraper, day: str) -> list[tuple[datetime, str]]:
+    """本日の全レースの (発走時刻, RACEID)。出馬表は発走時刻を読むだけなので長めのキャッシュでよい."""
+    out = []
+    for mid in _meetings_on(scraper, day):
+        for n in range(1, 13):
+            rid = race_id_for(mid, n)
+            try:
+                html = scraper.get(scraper.race_card_url(rid), max_age_sec=6 * 3600)
+            except Exception:  # noqa: BLE001
+                break
+            post = _post_time(html)
+            if not post:
+                break
+            out.append((datetime.strptime(f"{day} {post}", "%Y%m%d %H:%M"), rid))
+    return sorted(out)
+
+
+def cmd_live(args, cfg: dict) -> None:
+    """本日の全レースを発走 LIVE_LEAD_MIN 分前に自動判定し、紙上の買い目を記録し続ける（クラウド常駐用）.
+
+    --max-minutes を過ぎたら止め、まだレースが残っていれば GITHUB_OUTPUT に continue=1 を出す
+    （Actions が続きの実行を起動する）。
+    """
+    scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
+    started = datetime.now()
+    day = started.strftime("%Y%m%d")
+    budget = (args.max_minutes or 280) * 60
+    lo, hi = LIVE_LEAD_MIN
+    done: set[str] = set()
+    schedule: list[tuple[datetime, str]] = []
+    refreshed = None
+    n_eval = 0
+
+    def stop(more: bool) -> None:
+        _log_auto(f"live: {n_eval}レースを判定{'（時間切れ・続きは次の実行）' if more else '（本日分終了）'}")
+        if more and (out := os.environ.get("GITHUB_OUTPUT")):
+            with open(out, "a", encoding="utf-8") as fp:
+                fp.write("continue=1\n")
+
+    while True:
+        now = datetime.now()
+        if refreshed is None or (now - refreshed).total_seconds() > 1800:  # 発走時刻の変更に追従
+            schedule, refreshed = _today_schedule(scraper, day), now
+            print(f"[live] 本日 {len(schedule)}レース", file=sys.stderr)
+        pending = [(p, rid) for p, rid in schedule if rid not in done and p > now]
+        if not pending:
+            return stop(False)
+        if (now - started).total_seconds() > budget:
+            return stop(True)
+        for post, rid in pending:
+            lead = (post - now).total_seconds() / 60
+            if lead < lo:
+                done.add(rid)  # 判定の窓を過ぎた（取りこぼし）
+            elif lead <= hi:
+                try:
+                    card_html = scraper.get(scraper.race_card_url(rid), max_age_sec=0)
+                    race = race_parser.parse_race_card(card_html, rid)
+                    book = _load_odds_book(scraper, rid, cfg, fresh=True, kinds=SCAN_ODDS_KINDS)
+                    _apply_win_odds(race, book)
+                    _record_paper(race, book, 1500, _race_label(race), card_html, source="live")
+                    n_eval += 1
+                except Exception as e:  # noqa: BLE001
+                    print(f"  ⚠️ {rid} 判定失敗: {type(e).__name__}: {e}", file=sys.stderr)
+                done.add(rid)
+        nxt = min((p for p, rid in schedule if rid not in done and p > datetime.now()), default=None)
+        if nxt is None:
+            continue
+        wait = (nxt - datetime.now()).total_seconds() - hi * 60  # 次のレースの判定窓が開くまで
+        time.sleep(min(max(wait, 20), 600))
 
 
 def cmd_paper(args, cfg: dict) -> None:  # noqa: ARG001
@@ -675,8 +752,10 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="keiba-ai", description="楽天競馬 予想AIエージェント")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    for name in ("predict", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto", "paper", "health"):
+    for name in ("predict", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto", "paper", "health", "live"):
         sp = sub.add_parser(name)
+        if name == "live":
+            sp.add_argument("--max-minutes", type=int, help="この分数で止める（既定280。残りがあれば continue=1 を出力）")
         if name == "health":
             sp.add_argument("--to", help="確認する最終日 YYYYMMDD（既定は昨日）")
             sp.add_argument("--days", type=int, help="確認する日数（既定2）")
@@ -753,6 +832,7 @@ def main(argv: list[str] | None = None) -> None:
         "backfill": cmd_backfill,
         "paper": cmd_paper,
         "health": cmd_health,
+        "live": cmd_live,
         "train": cmd_train,
         "auto": cmd_auto,
     }

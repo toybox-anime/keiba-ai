@@ -89,9 +89,13 @@ python keiba.py scan --track 高知 --budget 5000
 
 ## 紙上の買い目（ペーパートレード）
 
-`predict --ev` / `scan` を**発走前の当日レース**に使うと、その時のオッズで「買い」の買い目を
-`predictions/paper.jsonl` に自動記録します（実際に買ったかとは無関係）。`python keiba.py paper` で
-払戻ページと照合し、戦略ごとの的中率・回収率を `predictions/paper_record.md` に出します。
+**クラウドが毎日、全レースを発走5〜12分前に自動判定**し（`.github/workflows/live.yml` → `live` コマンド）、
+その時のオッズで「買い」の買い目を `predictions/paper.jsonl` に記録します（実際に買ったかとは無関係）。
+毎晩の daily-collect が払戻と照合し、戦略ごとの的中率・回収率を `predictions/paper_record.md` に出します。
+**手元では `git pull` して `predictions/paper_record.md` を見るだけ**（`python keiba.py paper` でも表示可）。
+
+- 手元の `predict` / `scan` は記録しない（クラウドの記録と食い違わないように）。
+  手元でも記録したいときだけ環境変数 `KEIBA_PAPER_LOCAL=1` を付ける。
 
 | 戦略 | 記録する条件 | 金額 |
 |---|---|---|

@@ -1,0 +1,58 @@
+name: paper-live
+
+# 毎日、本日の全レースを発走5〜12分前に自動判定し、紙上の買い目（ペーパートレード）を記録する。
+# 1回の実行は約4.5時間で区切り、レースが残っていれば自分で続きの実行を起動する
+# （cronは数時間遅れることがあるので、開始は朝にして、あとは自己起動でつなぐ）。
+# 答え合わせ（採点）は毎晩の daily-collect が行う。
+on:
+  schedule:
+    - cron: "7 1 * * *" # 約 JST 10:07（遅れても昼の開催に間に合うよう朝に開始）
+    - cron: "37 3 * * *" # 約 JST 12:37（保険。先に動いていれば待機後すぐ終わる）
+  workflow_dispatch: {}
+
+permissions:
+  contents: write # 紙上記録をコミットするため
+  actions: write # 続きの実行を起動するため
+
+concurrency:
+  group: keiba-live
+  cancel-in-progress: false
+
+jobs:
+  live:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: 発走前の自動判定（紙上記録）
+        id: live
+        timeout-minutes: 300
+        run: python keiba.py live --max-minutes 270
+      - name: 記録をコミット
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f predictions/paper.jsonl data/auto.log 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "記録なし"
+            exit 0
+          fi
+          git commit -m "chore: 紙上記録（自動判定） $(date +%Y-%m-%d)"
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && exit 0
+            sleep $((i * 10))
+          done
+          exit 1
+      - name: 続きの実行を起動
+        if: steps.live.outputs.continue == '1'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run live.yml -R ${{ github.repository }}

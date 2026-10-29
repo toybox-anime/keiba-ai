@@ -66,13 +66,18 @@ def build_entries(race_id: str, label: str, rows: list[dict], book, wb: dict | N
 def load(path: Path) -> list[dict]:
     if not path.exists():
         return []
-    rows = []
+    # クラウドの記録（昼）と採点（夜）が union マージで合流すると、同じ記録の
+    # 採点前・採点後の2行が残ることがある。1レース×1戦略=1件にまとめ、採点済みを優先する。
+    best: dict[tuple, dict] = {}
     for line in path.read_text(encoding="utf-8").splitlines():
         try:
-            rows.append(json.loads(line))
+            r = json.loads(line)
         except (json.JSONDecodeError, ValueError):
             continue
-    return rows
+        k = (r.get("race_id"), r.get("strategy"))
+        if k not in best or r.get("graded") or not best[k].get("graded"):
+            best[k] = r
+    return list(best.values())
 
 
 def save(rows: list[dict], path: Path) -> None:
