@@ -1,7 +1,8 @@
 name: backfill
 
-# 取りこぼした過去分を、日付ごとの開催一覧からまとめて収集する手動ワークフロー（長期停止からの復旧用）。
-# 6時間制限があるので、長期間なら10日前後ずつ区切って複数回に分けて実行する。
+# 指定期間の過去分を、日付ごとの開催一覧からまとめて収集する手動ワークフロー
+# （取りこぼしの回収・過去データのさかのぼり収集）。
+# 1回の実行は約4.5時間で区切り、残りがあれば自分で続きの実行を起動する（長期間でも1回の投入でOK）。
 on:
   workflow_dispatch:
     inputs:
@@ -13,10 +14,13 @@ on:
         default: ""
 
 permissions:
-  contents: write
+  contents: write # dataset をコミットするため
+  actions: write # 続きの実行を起動するため
 
 concurrency:
-  group: keiba-collect # collectと同じグループにして同時実行を避ける
+  # 毎晩の収集(keiba-collect)とは別グループ。同じグループだと待機中の実行が1本しか持てず、
+  # 続きの実行が毎晩の収集を押し出してしまう。同時に動いても union マージとpush再試行で安全。
+  group: keiba-backfill
   cancel-in-progress: false
 
 jobs:
@@ -33,9 +37,10 @@ jobs:
           cache: pip
       - run: pip install -r requirements.txt
       - name: バックフィル
-        timeout-minutes: 300 # 時間切れでも下のコミットは走らせて途中までの分を残す
+        id: bf
+        timeout-minutes: 300 # 念のための上限。通常は --max-minutes で先に区切る
         run: >-
-          python keiba.py backfill
+          python keiba.py backfill --max-minutes 270
           ${{ inputs.from && format('--from {0}', inputs.from) || '' }}
           ${{ inputs.to && format('--to {0}', inputs.to) || '' }}
       - name: コミット
@@ -43,11 +48,23 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase --autostash origin main || true
           git add -f data/dataset.jsonl models/ data/auto.log 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "変更なし（収集ゼロ）"
-          else
-            git commit -m "chore: backfill ${{ inputs.from }}〜${{ inputs.to }}"
-            git push
+            exit 0
           fi
+          git commit -m "chore: backfill ${{ inputs.from }}〜${{ inputs.to }}"
+          # 毎晩の収集と同時にpushすることがあるので、取り込み直して数回再試行する
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && exit 0
+            sleep $((i * 10))
+          done
+          exit 1
+      - name: 続きの実行を起動
+        if: steps.bf.outputs.next_from != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh workflow run backfill.yml -R ${{ github.repository }}
+          -f from=${{ steps.bf.outputs.next_from }}
+          -f to=${{ inputs.to }}

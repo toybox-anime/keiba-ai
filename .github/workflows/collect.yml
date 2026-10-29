@@ -48,14 +48,18 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase --autostash origin main || true
           git add -f data/dataset.jsonl models/ data/auto.log 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "変更なし（新規データなし）"
-          else
-            git commit -m "chore: 自動収集 $(date -u +%Y-%m-%d)"
-            git push
+            exit 0
           fi
+          git commit -m "chore: 自動収集 $(date -u +%Y-%m-%d)"
+          # backfill と同時にpushすることがあるので、取り込み直して数回再試行する
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && exit 0
+            sleep $((i * 10))
+          done
+          exit 1
 
       # 直近2日の開催がデータに入っていなければ失敗にする → GitHubから失敗通知メールが届く。
       # コミットの後に置くので、ここで失敗しても集めた分は保存済み。

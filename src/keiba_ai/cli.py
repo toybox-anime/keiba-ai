@@ -407,8 +407,16 @@ def cmd_backfill(args, cfg: dict) -> None:
     known = {r["race_id"] for r in load_dataset(ROOT / "data/dataset.jsonl")}
     print(f"[backfill] {start} 〜 {end} を収集", file=sys.stderr)
 
+    started = datetime.now()
     total, cur = 0, start
     while cur <= end:
+        if args.max_minutes and (datetime.now() - started).total_seconds() > args.max_minutes * 60:
+            # 時間切れ。続きの開始日を残す（Actions では次の実行を自動で起動する）
+            print(f"[backfill] 時間切れ。続きは {cur} から", file=sys.stderr)
+            if out := os.environ.get("GITHUB_OUTPUT"):
+                with open(out, "a", encoding="utf-8") as fp:
+                    fp.write(f"next_from={cur}\n")
+            break
         try:
             mids = _meetings_on(scraper, str(cur))
         except Exception as e:  # noqa: BLE001
@@ -676,6 +684,7 @@ def main(argv: list[str] | None = None) -> None:
             sp.add_argument("--to", help="収集する最終日 YYYYMMDD（既定は昨日）")
             sp.add_argument("--from", dest="from_", help="収集する開始日 YYYYMMDD（省略時は --lookback）")
             sp.add_argument("--lookback", type=int, help="終了日から遡って収集する日数（既定3）")
+            sp.add_argument("--max-minutes", type=int, help="この分数を過ぎたら区切りの良い日で止める（続きは next_from に出力）")
         if name not in ("train", "auto", "backfill"):
             sp.add_argument("--race-id", help="18桁のRACEID")
             sp.add_argument("--date", help="開催日 YYYY-MM-DD")
