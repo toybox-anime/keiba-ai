@@ -31,7 +31,7 @@ from .features import build_feature_table
 from .model import WinModel
 from .odds import OddsBook, parse_into
 from .raceid import race_id_for
-from .report import build_gemini_prompt, gem_instructions, generate_report
+from .report import BOX_VERIFIED_NOTE, build_gemini_prompt, gem_instructions, generate_report
 from .schedule import meeting_ids_on, parse_meetings, resolve_meeting_id
 from .scraper import PoliteScraper
 from .train import train as train_model
@@ -425,6 +425,7 @@ def _render_scan(day, tracks, found, skipped, budget) -> str:
                 f'{m["hit"]}% | {m["synth"]}倍 | {m["ev"]} | {verdict} |'
             )
         lines += ["", "> 「直前に再確認」はEVが高すぎ＝売上の薄いオッズの疑い。発走10分前に再計算を。"]
+        lines += [f"> ⚠️ {BOX_VERIFIED_NOTE}"]
         lines += [
             "",
             "### 詳しい買い目を見る（上位レースを深掘り）",
