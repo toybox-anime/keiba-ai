@@ -22,7 +22,7 @@ from pathlib import Path
 import yaml
 from bs4 import BeautifulSoup
 
-from . import paper
+from . import details, paper
 from . import parser as race_parser
 from . import result as race_result
 from .betting import recommend_buy_methods, wide_box
@@ -32,6 +32,7 @@ from .model import WinModel
 from .odds import OddsBook, parse_into
 from .raceid import race_id_for
 from .report import BOX_VERIFIED_NOTE, build_gemini_prompt, gem_instructions, generate_report
+from .pastperf import parse_card_details
 from .schedule import meeting_ids_on, parse_meetings, resolve_meeting_id
 from .scraper import PoliteScraper
 from .train import train as train_model
@@ -461,6 +462,11 @@ def _collect_one(scraper: PoliteScraper, race_id: str, cfg: dict, *, quiet: bool
         return {"race_id": race_id, "horses": len(race.horses), "result": 0, "added": 0, "exists": True}
 
     added = append_rows(race_result_to_rows(race, result), ROOT / "data/dataset.jsonl")
+    if added:  # 新しく入ったレースは、近走の中身・血統などの詳細も保存する
+        try:
+            details.append(race_id, parse_card_details(card_html), ROOT)
+        except Exception as e:  # noqa: BLE001
+            print(f"  ⚠️ {race_id} 詳細の保存に失敗: {type(e).__name__}: {e}", file=sys.stderr)
     return {"race_id": race_id, "horses": len(race.horses), "result": len(result), "added": added, "exists": True}
 
 
@@ -519,6 +525,37 @@ def cmd_backfill(args, cfg: dict) -> None:
         cur = _add_days(cur, 1)
 
     print(f"[backfill] 完了。追記 {total}行。現状: {dataset_stats(ROOT / 'data/dataset.jsonl')}", file=sys.stderr)
+
+
+def cmd_enrich(args, cfg: dict) -> None:
+    """データセットにあるレースのうち、詳細（近走の中身・血統など）が未保存のものを出馬表から取り直す.
+
+    --from/--to で日付を絞れる。--max-minutes で区切り、残りがあれば next_from を出力（Actions が続きを起動）。
+    """
+    scraper = _make_scraper(cfg, delay_override=cfg["scraper"].get("interactive_delay_sec", 5))
+    have = details.known_ids(ROOT)
+    todo = sorted({r["race_id"] for r in load_dataset(ROOT / "data/dataset.jsonl")} - have)
+    if args.from_:
+        todo = [r for r in todo if r[:8] >= args.from_]
+    if args.to:
+        todo = [r for r in todo if r[:8] <= args.to]
+    print(f"[enrich] 詳細が未保存のレース {len(todo)}件", file=sys.stderr)
+    started, done = datetime.now(), 0
+    for i, rid in enumerate(todo):
+        if args.max_minutes and (datetime.now() - started).total_seconds() > args.max_minutes * 60:
+            print(f"[enrich] 時間切れ。続きは {rid[:8]} から", file=sys.stderr)
+            if out := os.environ.get("GITHUB_OUTPUT"):
+                with open(out, "a", encoding="utf-8") as fp:
+                    fp.write(f"next_from={rid[:8]}\n")
+            break
+        try:
+            html = scraper.get(scraper.race_card_url(rid), max_age_sec=30 * 86400)
+            done += details.append(rid, parse_card_details(html), ROOT)
+        except Exception as e:  # noqa: BLE001
+            print(f"  ⚠️ {rid}: {type(e).__name__}: {e}", file=sys.stderr)
+        if i % 200 == 0:
+            print(f"  {i}/{len(todo)} ({rid[:8]})", file=sys.stderr)
+    _log_auto(f"enrich: {done}レースの詳細を保存（残り {len(todo) - done}件）")
 
 
 def cmd_health(args, cfg: dict) -> None:
@@ -753,8 +790,12 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(prog="keiba-ai", description="楽天競馬 予想AIエージェント")
     sub = p.add_subparsers(dest="cmd", required=True)
 
-    for name in ("predict", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto", "paper", "health", "live"):
+    for name in ("predict", "scan", "calibrate", "fetch-odds", "collect", "collect-day", "backfill", "train", "auto", "paper", "health", "live", "enrich"):
         sp = sub.add_parser(name)
+        if name == "enrich":
+            sp.add_argument("--from", dest="from_", help="対象の開始日 YYYYMMDD")
+            sp.add_argument("--to", help="対象の最終日 YYYYMMDD")
+            sp.add_argument("--max-minutes", type=int, help="この分数で区切る（続きは next_from に出力）")
         if name == "live":
             sp.add_argument("--max-minutes", type=int, help="この分数で止める（既定280。残りがあれば continue=1 を出力）")
         if name == "health":
@@ -834,6 +875,7 @@ def main(argv: list[str] | None = None) -> None:
         "paper": cmd_paper,
         "health": cmd_health,
         "live": cmd_live,
+        "enrich": cmd_enrich,
         "train": cmd_train,
         "auto": cmd_auto,
     }

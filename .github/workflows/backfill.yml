@@ -48,7 +48,7 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add -f data/dataset.jsonl models/ data/auto.log 2>/dev/null || true
+          git add -f data/dataset.jsonl data/details/ models/ data/auto.log 2>/dev/null || true
           if git diff --cached --quiet; then
             echo "変更なし（収集ゼロ）"
             exit 0

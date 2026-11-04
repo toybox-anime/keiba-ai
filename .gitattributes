@@ -6,3 +6,4 @@
 data/dataset.jsonl merge=union
 data/auto.log merge=union
 predictions/paper.jsonl merge=union
+data/details/*.jsonl merge=union

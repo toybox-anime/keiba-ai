@@ -1,0 +1,69 @@
+name: enrich
+
+# データセットにあるレースの「詳細」（近走の中身・血統・条件別成績）を出馬表から取り直す手動ワークフロー。
+# 1回の実行は約4.5時間で区切り、残りがあれば自分で続きの実行を起動する（9,000レースで3回ほど）。
+on:
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "対象の開始日 YYYYMMDD（空欄=全部）"
+        default: ""
+      to:
+        description: "対象の最終日 YYYYMMDD（空欄=全部）"
+        default: ""
+
+permissions:
+  contents: write # dataset をコミットするため
+  actions: write # 続きの実行を起動するため
+
+concurrency:
+  # 毎晩の収集(keiba-collect)とは別グループ。同じグループだと待機中の実行が1本しか持てず、
+  # 続きの実行が毎晩の収集を押し出してしまう。同時に動いても union マージとpush再試行で安全。
+  group: keiba-enrich
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 330
+    env:
+      TZ: Asia/Tokyo
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: 詳細の取り直し
+        id: bf
+        timeout-minutes: 300 # 念のための上限。通常は --max-minutes で先に区切る
+        run: >-
+          python keiba.py enrich --max-minutes 270
+          ${{ inputs.from && format('--from {0}', inputs.from) || '' }}
+          ${{ inputs.to && format('--to {0}', inputs.to) || '' }}
+      - name: コミット
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/details/ data/auto.log 2>/dev/null || true
+          if git diff --cached --quiet; then
+            echo "変更なし"
+            exit 0
+          fi
+          git commit -m "chore: enrich 詳細の取り直し ${{ inputs.from }}〜${{ inputs.to }}"
+          # 毎晩の収集と同時にpushすることがあるので、取り込み直して数回再試行する
+          for i in 1 2 3 4 5; do
+            git pull --rebase origin main && git push && exit 0
+            sleep $((i * 10))
+          done
+          exit 1
+      - name: 続きの実行を起動
+        if: steps.bf.outputs.next_from != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          gh workflow run enrich.yml -R ${{ github.repository }}
+          -f from=${{ steps.bf.outputs.next_from }}
+          -f to=${{ inputs.to }}
