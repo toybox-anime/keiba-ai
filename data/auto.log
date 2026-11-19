@@ -2331,3 +2331,5 @@
 [2026-11-19 05:55:25] backfill 20261118: 3開催 0行追記
 [2026-11-20 04:30:10] 開催一覧の取得に失敗: RuntimeError: 取得失敗: https://keiba.rakuten.co.jp/race_card/list/RACEID/202611190000000000 (503 Server Error: Service Unavailable for url: https://keiba.rakuten.co.jp/race_card/list/RACEID/202611190000000000)
 [2026-11-20 04:30:10] → クラウドIPが楽天にブロックされている可能性があります。
+[2026-11-20 05:59:56] 開催一覧の取得に失敗: RuntimeError: 取得失敗: https://keiba.rakuten.co.jp/race_card/list/RACEID/202611190000000000 (503 Server Error: Service Unavailable for url: https://keiba.rakuten.co.jp/race_card/list/RACEID/202611190000000000)
+[2026-11-20 05:59:56] → クラウドIPが楽天にブロックされている可能性があります。
